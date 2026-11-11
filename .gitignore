@@ -1,0 +1,34 @@
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Secrets
+.env
+*.key
+*.pem
+
+# Training outputs and large files (small ONNX exports are allowed)
+runs/
+logs/*/
+wandb/
+outputs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.mp4
+*.mov
+data/raw/
+
+# CAD exports
+*.step
+*.stl
+*.3mf
