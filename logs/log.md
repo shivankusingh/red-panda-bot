@@ -47,4 +47,23 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Right hip-side axes mirrored so + = outward on every leg, which avoids left/right sign bugs (flip those servo signs on the real robot).
   - Ranges (deg): front knees −150..0, hind knees 0..150, hips ±90, hip-side −20..35, tail lift −70..90, tail wags ±50, neck turn ±70, nod ±45, head tilt ±30. These are rough; the CAD sets the real ones.
   - Armature 0.02 is a placeholder (like kp and damping) until the BAM rig.
-- **Next:** Install MuJoCo Playground on the Mac and read the Go1 example's environment and reward code.
+- **Next:** ~~Install MuJoCo Playground on the Mac and read the Go1 example~~ (started, see below).
+
+## 2026-11-12
+### Playground + how RL works (reading the Go1 example)
+- **Did:** Installed MuJoCo Playground 0.2.0 (with JAX, Brax, MJX 4.0.1) in `.venv`. Ran `Go1JoystickFlatTerrain` on the CPU (100 steps OK). Read `joystick.py`: observations (`_get_obs`, line 357) and actions (`step`, line 253).
+- **Learned:**
+  - The RL loop, every 0.02 s (50 Hz): sense → policy → motor targets → physics → reward. Like training my dog: observation = what it notices, action = what it does, reward = treat.
+  - The policy is a formula: numbers in, numbers out. Go1: 48 in → layers of 512, 256, 128 neurons → 12 out, ~190,000 weights (~1 MB). My red panda: 57 in (3+3+3 + 15+15+15 + 3), 15 out.
+  - Observation = body speed, spin (gyro), which way is down (projected gravity), joint angles and speeds relative to the home pose, last action, joystick command. `info` is a dictionary: `info["command"]` is the label, the 3 numbers are what's stored. `jp.hstack` glues the lists into one.
+  - Sensor noise: the policy sees true value + a small random error (gyro: ±0.2); the reward uses the true values. Domain randomization is different: it changes the robot itself (mass, friction, kp) each episode.
+  - Action: target = home pose + action × action_scale (0.5). Actions are −1..+1 (the output squash), so Go1 can only reach ±0.5 rad ≈ ±29° from home.
+  - Two limits: the XML joint range is what the body can do (it must match the real robot); action_scale is how far the policy may reach from home (a training choice). The tighter one wins. My hind hips need ~70° for the tripod, which needs a bigger scale, a different home pose, or full-range mapping, not a different XML.
+  - Joystick command = 3 numbers (forward speed, sideways speed, turn rate): the 3 body motions worth steering. The other 3 (up/down, roll, pitch) should stay calm and are penalized. Training picks random commands every few seconds. Tier 1 may only need 2 (walk + turn).
+  - Neural network: each neuron = weighted sum of the layer before → squash (ReLU: negative → 0). Without the squash, all the layers collapse into one straight line. Weights live in grids (row = input, column = neuron).
+  - Learning: start random, try actions with bell-curve jitter, and nudge every weight by step size × (better/worse) × (jitter) × (its input). Backprop sends blame backward from the outputs in one sweep; each weight's nudge = blame at its receiving neuron × the signal through it (like pre × post in STDP, but the post signal is backpropagated blame). Step size 3e-4, 8,192 robots, 200M steps.
+  - It's fast because it's all matrix multiplication; a GPU does trillions per second. The policy runs on the Pi in well under 1 ms (to measure).
+  - Go1 has a critic that sees 123 numbers (privileged state), which is asymmetric actor-critic. Also found `Go1Getup` (fall recovery) and `Go1Footstand` (hind-leg stand), useful references.
+- **Mistakes fixed:** I was told the policy has "millions" of weights; it's ~190,000.
+- **Decisions and why:** Not adding an SNN version of the policy: the servos dominate power use and the Pi is already fast enough, so the robot doesn't need it.
+- **Next:** Part 3: the Go1 reward terms, a couple at a time; then decide the red panda's rewards.
