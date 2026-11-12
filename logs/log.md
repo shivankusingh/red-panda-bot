@@ -66,4 +66,34 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Go1 has a critic that sees 123 numbers (privileged state), which is asymmetric actor-critic. Also found `Go1Getup` (fall recovery) and `Go1Footstand` (hind-leg stand), useful references.
 - **Mistakes fixed:** I was told the policy has "millions" of weights; it's ~190,000.
 - **Decisions and why:** Not adding an SNN version of the policy: the servos dominate power use and the Pi is already fast enough, so the robot doesn't need it.
-- **Next:** Part 3: the Go1 reward terms, a couple at a time; then decide the red panda's rewards.
+- **Next:** ~~Part 3: the Go1 reward terms, a couple at a time~~ (groups A–D done, see below); then decide the red panda's rewards.
+
+### Go1 rewards, part 3 (groups A–D: 12 of 16 terms)
+- **Did:** Read `_get_reward` in `joystick.py` (weights at line 53, sum at 278, terms at 433–508). Traced where the network and PPO live in Brax. Ran two small sim tests on `sim/red_panda.xml` (front-left hip): flipping commands vs. smooth commands.
+- **Learned:**
+  - **Network vs. PPO vs. reward.** The network is the formula (Brax `MLP`, `brax/training/networks.py:137`); no file holds weight values, they start random (`lecun_uniform`) and live in the checkpoint. PPO (Schulman 2017) is the fixed rule that edits weights: reward → advantage (better/worse than the critic expected) → loss (`losses.py:245`) → `jax.grad` does backprop automatically → Adam nudges weights. The reward is the only part I write; it decides *what* gets learned. Same PPO for walking and the tripod, different reward.
+  - **How the reward is added up:** 16 raw numbers × weights, summed, × dt (0.02), floored at 0. The floor stops "fall on purpose to end the penalties", but every step below 0 looks the same (0), so early training needs always-on treats (tracking, pose) to show differences.
+  - **A. Tracking** (+1.0 speed, +0.5 turn): `exp(−error²/sigma)`, a hill from 1 down to 0. error² = (wanted − actual)² for forward + sideways. Crab-walking sideways at the commanded speed scores 0.0003. Sigma = how forgiving the grader is; reward = 0.37 when error² = sigma. Too small → random policy scores ~0 everywhere → nothing to learn. A slower robot needs a smaller sigma.
+  - **B. Body calm:** `lin_vel_z` (−0.5, bouncing), `ang_vel_xy` (−0.05, rocking; small because trots naturally rock), `orientation` (−5.0, leaning; = x² + y² of the body's up arrow = sin²(tilt): 30° costs −1.25, more than all of tracking). Roll tips the up arrow toward **y**, pitch toward **x**: the arrow leans perpendicular to the pin.
+  - **Weights are prices, not fences.** Joint limits and termination are fences. Lowering a penalty gives permission, not style; natural-looking motion comes from the personality layer and energy terms, not from cheaper wobble.
+  - **C. Gentle on motors:** `torques` (−0.0002, total pushing, even when still), `energy` (−0.001, push × speed = watts, 0 when still), `action_rate` (−0.01, (change in command)²). Weights carry hidden units: red panda torques are ~10× smaller than Go1's, so the torque weight needs ~10× bigger. Heat ∝ torque², so `torques` is what matters for the tripod hold.
+  - **action_rate test:** a hip told to flip ±8.6° every step only wiggled 0.4–0.7°, but the motor pushed ±1.5 N·m back and forth (half of max). Smooth ramp + zigzag on top: same leg path (23.68° vs 23.41°) but action_rate 0.035 vs 1.295. The leg is slow, so one 0.02 s step barely moves it; zigzags cancel out and the servo pays for nothing. Too big a weight makes "don't move" the best strategy.
+  - **My idea: penalize sign flips of the change** = (change now − change before)². It doesn't punish fast-but-smooth moves, only sharp reversals. Go1 passes `last_last_act` but doesn't use it. Usually paired with a small action_rate.
+  - **D. Posture and safety:** `pose` (+0.5, exp hill around the home keyframe; knees count 0.1× because walking bends them), `stand_still` (−1.0, Σ|q − home|, only when the joystick is centered), `dof_pos_limits` (−1.0, past the soft limit = range × 0.95), `termination` (−1.0, up arrow z < 0 = tilted past 90°). Falling hurts because the episode ends and all future reward is lost (falling at step 200 of 1000 loses ~24 vs. 0.02 from the term).
+  - `lowers, uppers = jnt_range[1:].T`: the XML `range` loaded into a table (radians), skip row 0 (the torso's free joint), transpose to split lows and highs.
+- **Mistakes fixed:**
+  - The policy outputs **24** numbers for Go1 (mean + spread per joint), not 12; on the robot only tanh(mean) is used. The red panda will output 30. Weight count: 192,408.
+  - The squash is **swish** (x × sigmoid(x), a smooth ReLU), not ReLU: Brax's PPO default, and Go1 doesn't override it.
+  - Soft limits ×0.95 shrink toward **zero**, not the middle: no warning zone on ranges that end at 0 (all my knees at the straight-leg end) and the soft limit lands outside ranges that don't include 0 (Go1's knee).
+- **Decisions and why:**
+  - Plan A: finish all 16 terms before writing the red panda env, because the feet terms have size-dependent numbers (`max_foot_height` = 10 cm is 40% of my leg).
+  - Rewards in two passes: (1) minimal port, only fixing what's broken for my size (torque weight, foot height, sigma, command speeds), as a baseline; (2) my own redesign, each change tested against pass 1.
+- **Red panda notes (decide later):**
+  - Tripod: `orientation` and `pose` both pull the body back to level/home, so it needs its own target tilt and tripod pose. Tracking terms drop out.
+  - Home pose: the model has no keyframe and stands with straight knees (0°, at the limit); pick a crouch, check torques in sim.
+  - Soft limits: shrink toward the middle of the range (hind knee 0..150° → 3.75..146.25°).
+  - Fall rules: "z < 0" would end the free stand at 92° tilt; "anything but feet touches ground" would end the tripod. Use torso/head contact or height.
+  - Holding a skill must be worth more than falling out of it.
+  - Candidates: second-difference smoothness term, torque² heat term, action filter, ramping action_rate up during training.
+  - Top speed, sigma, and command ranges come from the sim (servo ~5 rad/s vs Go1 ~30, legs 24 cm vs 43 cm). Time the Go1 run on the first GPU session and note GPU + cost.
+- **Next:** Group E (feet: `feet_clearance`, `feet_height`, `feet_slip`, `feet_air_time`), then prep the model for training (home keyframe, IMU site + sensors, foot contacts).

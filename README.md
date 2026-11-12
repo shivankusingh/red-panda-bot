@@ -19,7 +19,9 @@ A small red panda robot that walks on four legs, rears up into a tripod stance u
 
 This project rebuilds known methods; the tail is the new part.
 
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017)
 - Rudin et al., "Learning to Walk in Minutes Using Massively Parallel Deep Reinforcement Learning" (2021)
+- Zakka et al., "MuJoCo Playground" (2025), with Brax's PPO; the Go1 joystick example is the starting point for the rewards
 - Hwangbo et al., "Learning agile and dynamic motor skills for legged robots" (Science Robotics, 2019)
 - Rhoban, BAM servo identification
 - Lee et al., "Learning quadrupedal locomotion over challenging terrain" (Science Robotics, 2020)
