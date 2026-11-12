@@ -77,6 +77,8 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Tail joints | 3 servos: 2 together at the tail base (side to side, then up/down) + 1 side-to-side at 11 cm along for an S-curve wag. Tail is 27.5 cm, light and rigid between joints. Later sim tests: tail length 22.5 / 27.5 / 32.5 cm; mid-tail servo locked (2-servo tail) vs. active |
 | Feet | Identical legs with bolt-on feet (test point feet vs. longer hind feet) |
 | Leg geometry | Borrowed from the original Stanford Pupper (hobby-servo version); tail, body, head original |
+| Knee direction | Animal-like: front knees point backward, hind knees point forward (hind knees stay clear of the ground and tail when the body tilts up for the tripod). Later sim test: all knees backward (Go1-style) |
+| Joint sign convention | Right-hand rule. Right legs' hip-side axes are mirrored (`-1 0 0`) so + = outward on every leg; flip those servo signs on the real robot |
 | CAD | Onshape |
 | Simulator | MuJoCo Playground (Open Duck Mini + BAM servo model already work there). Bake-off vs. Isaac Lab skipped; a short Go1 example run checks the setup instead |
 | Compute | Rented cloud GPU (~$10–40/month); university GPU cluster as backup. Shut machines down when idle |

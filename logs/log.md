@@ -29,4 +29,22 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Neck with 3 servos (turn, nod, tilt), because the head tilt is cute. Held still in the sim for now.
   - Model mass 1.8 kg (parts estimate 1.64–1.74 kg), randomized ±10%. Not 1.9: a too-heavy sim gives fake torque fails and a policy tuned for the wrong robot.
   - Battery in the center of the torso. kp = 10 and damping = 0.1 are placeholders until the BAM servo rig.
-- **Next:** Add joint limits, then set up Playground on the Mac and read the Go1 example's environment and reward code.
+- **Next:** ~~Add joint limits~~ (done, see below), then set up Playground on the Mac and read the Go1 example's environment and reward code.
+
+### Joint limits
+- **Did:** Added a range to all 18 joints, motors copy their joint's range (`inheritrange`), mirrored the right legs' hip-side axes, added armature. Tested: still stands still (0.248 m); motors asked for impossible angles stop at the limit; a 2 N·m shove gets 0.1° past a knee limit.
+- **Learned:**
+  - Joint limits keep the policy honest. RL will use any impossible motion the sim allows.
+  - Right-hand rule: thumb along the axis, fingers curl = positive. Checked every joint in the sim (e.g. knee + = foot swings back, tail lift + = up, neck nod + = look down).
+  - Ranges in the XML are in **degrees** (MuJoCo default), but joint angles and motor targets in the sim are **radians**.
+  - Armature = the extra "heaviness" of a joint from the servo's fast motor spinning through 1:345 gears (≈ 0.024 kg·m² estimated, ~200× the lower leg itself). It only matters when speed changes, not when holding still or moving steadily.
+- **Mistakes fixed:**
+  - With the same hip-side axis on both sides, + was outward on left legs but inward on right legs, so I mirrored the right axes.
+  - Knee limits were soft (10.7° past the limit under a 2 N·m shove) because the joints had no armature and felt as light as a 20 g leg piece. Armature 0.02 fixed it (0.1°).
+  - I had been told moving the knee servo to the hip makes the leg ~2× easier to swing. Overstated: armature dominates. It still helps for balance, impacts, and protecting the servo and cables.
+- **Decisions and why:**
+  - Hind knees bend forward, front knees backward (animal-like). Backward hind knees would point at the ground and tail when the body tilts up for the tripod. All-backward (Go1-style) is a later sim test.
+  - Right hip-side axes mirrored so + = outward on every leg, which avoids left/right sign bugs (flip those servo signs on the real robot).
+  - Ranges (deg): front knees −150..0, hind knees 0..150, hips ±90, hip-side −20..35, tail lift −70..90, tail wags ±50, neck turn ±70, nod ±45, head tilt ±30. These are rough; the CAD sets the real ones.
+  - Armature 0.02 is a placeholder (like kp and damping) until the BAM rig.
+- **Next:** Install MuJoCo Playground on the Mac and read the Go1 example's environment and reward code.
