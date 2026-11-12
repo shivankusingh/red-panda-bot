@@ -96,4 +96,20 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Holding a skill must be worth more than falling out of it.
   - Candidates: second-difference smoothness term, torque² heat term, action filter, ramping action_rate up during training.
   - Top speed, sigma, and command ranges come from the sim (servo ~5 rad/s vs Go1 ~30, legs 24 cm vs 43 cm). Time the Go1 run on the first GPU session and note GPU + cost.
-- **Next:** Group E (feet: `feet_clearance`, `feet_height`, `feet_slip`, `feet_air_time`), then prep the model for training (home keyframe, IMU site + sensors, foot contacts).
+- **Next:** ~~Group E (feet)~~ (done, see below), then prep the model for training (home keyframe, IMU site + sensors, foot contacts).
+
+### Go1 rewards, part 3 (group E: feet, 16 of 16 done)
+- **Did:** Read the feet terms (`joystick.py:512-548`) and the per-foot bookkeeping in `step` (lines 258-267, 294-296).
+- **Learned:**
+  - `feet_slip` (−0.1): Σ foot speed² × contact, only while walking. A foot on the ground shouldn't slide (skating fails on real floors); feet in the air are ignored.
+  - `feet_clearance` (−2.0): Σ |foot height − 0.1 m| × √(foot speed). The speed works like a dimmer switch: planted feet cost nothing, moving feet should be at the target height. Dragging low (0.02 m at 1 m/s) costs −0.16; too high costs too.
+  - Foot height is measured at the **center** of the foot ball, so a planted Go1 foot reads ~0.023 m (its radius), and the 0.1 m target is really ~7.7 cm of lift.
+  - Bookkeeping per foot: `feet_air_time` = stopwatch (runs in the air, resets on the ground), `swing_peak` = high-water mark of this flight, `first_contact` = 1 only on the landing step (the "ding" that triggers scoring). `contact_filt` = touching now or last step, so a flickering landing isn't counted twice.
+  - `feet_air_time` (+0.1): Σ (air time − 0.1 s) at landing, only while walking. 0.3 s step → +0.02; 0.06 s shuffle → −0.004. Discourages tiny tapping steps; no upper cap (other terms keep it in check).
+  - `feet_height` (−0.2): Σ (peak / 0.1 − 1)² at landing. Peak 0.07 m → −0.018. Clearance checks the whole path every step; feet_height checks only the top of each step's arc.
+- **Red panda notes (decide later):**
+  - Target foot height: 0.1 m is 42% of my 24 cm leg (Go1: 23%). Scaled: ~4.5 cm of lift + 1 cm foot radius ≈ 5.5 cm; maybe lower because the servos are slow.
+  - Air-time threshold (0.1 s): shorter legs say ~0.075 s, slow servos say ≥ 0.14 s just to swing the hip 40°. Probably longer; log real swing times in the first run and set it just below a typical good step.
+  - The model needs foot sites (feet are currently just the 1 cm capsule ends) + foot velocity sensors + foot–floor contact sensors.
+  - Energy weight also needs rescaling (watts much smaller than Go1's).
+- **Next:** Read Rudin 2021's reward table alongside (should be quick now). Then prep the model for training: home keyframe (crouch choice, check torques in sim), IMU site + sensors, foot sites + sensors.
