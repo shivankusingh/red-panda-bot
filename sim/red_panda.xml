@@ -1,0 +1,130 @@
+<mujoco model="red_panda">
+  <worldbody>
+    <light pos="0 0 2"/>
+    <geom name="floor" type="plane" size="2 2 0.1"/>
+
+    <body name="torso" pos="0 0 0.3">
+      <freejoint/>
+      <geom name="torso" type="box" size="0.16 0.05 0.025" mass="0.72" rgba="0.8 0.35 0.1 1"/>
+
+      <!-- front-left leg -->
+      <body name="fl_hip" pos="0.12 0.04 0">
+        <joint name="fl_hip_side" type="hinge" damping="0.1" axis="1 0 0"/>
+        <geom type="box" size="0.02 0.02 0.02" mass="0.125" rgba="0.15 0.1 0.08 1"/>
+
+        <body name="fl_upper" pos="0 0.03 0">
+          <joint name="fl_hip" type="hinge" damping="0.1" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0  0 0 -0.1235" size="0.01" mass="0.025" rgba="0.15 0.1 0.08 1"/>
+
+          <body name="fl_lower" pos="0 0 -0.1235">
+            <joint name="fl_knee" type="hinge" damping="0.1" axis="0 1 0"/>
+            <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- front-right leg -->
+      <body name="fr_hip" pos="0.12 -0.04 0">
+        <joint name="fr_hip_side" type="hinge" damping="0.1" axis="1 0 0"/>
+        <geom type="box" size="0.02 0.02 0.02" mass="0.125" rgba="0.15 0.1 0.08 1"/>
+
+        <body name="fr_upper" pos="0 -0.03 0">
+          <joint name="fr_hip" type="hinge" damping="0.1" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0  0 0 -0.1235" size="0.01" mass="0.025" rgba="0.15 0.1 0.08 1"/>
+
+          <body name="fr_lower" pos="0 0 -0.1235">
+            <joint name="fr_knee" type="hinge" damping="0.1" axis="0 1 0"/>
+            <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+          </body>
+        </body>
+      </body>
+      <!-- back-left leg -->
+      <body name="bl_hip" pos="-0.12 0.04 0">
+        <joint name="bl_hip_side" type="hinge" damping="0.1" axis="1 0 0"/>
+        <geom type="box" size="0.02 0.02 0.02" mass="0.125" rgba="0.15 0.1 0.08 1"/>
+
+        <body name="bl_upper" pos="0 0.03 0">
+          <joint name="bl_hip" type="hinge" damping="0.1" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0  0 0 -0.1235" size="0.01" mass="0.025" rgba="0.15 0.1 0.08 1"/>
+
+          <body name="bl_lower" pos="0 0 -0.1235">
+            <joint name="bl_knee" type="hinge" damping="0.1" axis="0 1 0"/>
+            <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- back-right leg -->
+      <body name="br_hip" pos="-0.12 -0.04 0">
+        <joint name="br_hip_side" type="hinge" damping="0.1" axis="1 0 0"/>
+        <geom type="box" size="0.02 0.02 0.02" mass="0.125" rgba="0.15 0.1 0.08 1"/>
+
+        <body name="br_upper" pos="0 -0.03 0">
+          <joint name="br_hip" type="hinge" damping="0.1" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0  0 0 -0.1235" size="0.01" mass="0.025" rgba="0.15 0.1 0.08 1"/>
+
+          <body name="br_lower" pos="0 0 -0.1235">
+            <joint name="br_knee" type="hinge" damping="0.1" axis="0 1 0"/>
+            <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- neck: turn (z), nod (y), tilt (x); held still by the motors until personality work -->
+      <geom type="box" pos="0.17 0 0" size="0.015 0.02 0.02" mass="0.055" rgba="0.15 0.1 0.08 1"/>
+      <body name="neck_1" pos="0.17 0 0.025">
+        <joint name="neck_turn" type="hinge" damping="0.1" axis="0 0 1"/>
+        <geom type="box" pos="0 0 0.015" size="0.015 0.015 0.015" mass="0.055" rgba="0.15 0.1 0.08 1"/>
+
+        <body name="neck_2" pos="0 0 0.03">
+          <joint name="neck_nod" type="hinge" damping="0.1" axis="0 1 0"/>
+          <geom type="box" pos="0.02 0 0" size="0.015 0.015 0.015" mass="0.055" rgba="0.15 0.1 0.08 1"/>
+
+          <body name="head" pos="0.04 0 0">
+            <joint name="head_tilt" type="hinge" damping="0.1" axis="1 0 0"/>
+            <geom type="box" pos="0.02 0 0" size="0.035 0.035 0.03" mass="0.075" rgba="0.8 0.35 0.1 1"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- tail: wag (z) + lift (y) at the base, then a second wag (z) 11 cm along -->
+      <body name="tail_base" pos="-0.16 0 0">
+        <joint name="tail_wag" type="hinge" damping="0.1" axis="0 0 1"/>
+        <geom type="box" pos="-0.02 0 0" size="0.02 0.02 0.02" mass="0.065" rgba="0.15 0.1 0.08 1"/>
+
+        <body name="tail_1" pos="-0.04 0 0">
+          <joint name="tail_lift" type="hinge" damping="0.1" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0  -0.11 0 0" size="0.015" mass="0.015" rgba="0.8 0.35 0.1 1"/>
+          <geom type="box" pos="-0.11 0 0" size="0.02 0.015 0.015" mass="0.055" rgba="0.15 0.1 0.08 1"/>
+
+          <body name="tail_2" pos="-0.11 0 0">
+            <joint name="tail_wag2" type="hinge" damping="0.1" axis="0 0 1"/>
+            <geom type="capsule" fromto="0 0 0  -0.165 0 0" size="0.015" mass="0.025" rgba="0.8 0.35 0.1 1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- kp is a placeholder until we measure the real servo (BAM) -->
+    <position name="fl_hip_side" joint="fl_hip_side" kp="10" forcerange="-2.9 2.9"/>
+    <position name="fl_hip" joint="fl_hip" kp="10" forcerange="-2.9 2.9"/>
+    <position name="fl_knee" joint="fl_knee" kp="10" forcerange="-2.9 2.9"/>
+    <position name="fr_hip_side" joint="fr_hip_side" kp="10" forcerange="-2.9 2.9"/>
+    <position name="fr_hip" joint="fr_hip" kp="10" forcerange="-2.9 2.9"/>
+    <position name="fr_knee" joint="fr_knee" kp="10" forcerange="-2.9 2.9"/>
+    <position name="bl_hip_side" joint="bl_hip_side" kp="10" forcerange="-2.9 2.9"/>
+    <position name="bl_hip" joint="bl_hip" kp="10" forcerange="-2.9 2.9"/>
+    <position name="bl_knee" joint="bl_knee" kp="10" forcerange="-2.9 2.9"/>
+    <position name="br_hip_side" joint="br_hip_side" kp="10" forcerange="-2.9 2.9"/>
+    <position name="br_hip" joint="br_hip" kp="10" forcerange="-2.9 2.9"/>
+    <position name="br_knee" joint="br_knee" kp="10" forcerange="-2.9 2.9"/>
+    <position name="tail_wag" joint="tail_wag" kp="10" forcerange="-2.9 2.9"/>
+    <position name="tail_lift" joint="tail_lift" kp="10" forcerange="-2.9 2.9"/>
+    <position name="tail_wag2" joint="tail_wag2" kp="10" forcerange="-2.9 2.9"/>
+    <position name="neck_turn" joint="neck_turn" kp="10" forcerange="-2.9 2.9"/>
+    <position name="neck_nod" joint="neck_nod" kp="10" forcerange="-2.9 2.9"/>
+    <position name="head_tilt" joint="head_tilt" kp="10" forcerange="-2.9 2.9"/>
+  </actuator>
+</mujoco>
