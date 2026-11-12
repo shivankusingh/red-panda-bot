@@ -70,17 +70,22 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Servos | STS3215 C018 (12 V) for all legs and the tail. Compare loads to rated torque, not stall |
 | Power | One 3S LiPo for servos; separate 5 V / 5 A regulator for the Pi; shared ground |
 | Bus | Legs, tail, and neck on the serial bus; ears on PWM |
+| Rough-model body | 32 × 10 × 5 cm, hips ±12 cm front/back of center; Pupper legs (12.35 + 11.5 cm). Later sim test: Pupper's 27.6 cm body for rearing comparison |
+| Rough-model mass | 1.8 kg nominal, a bit above the parts estimate (~1.64–1.74 kg, servos ≈ 55 g each × 18) so the torque checks have margin. Train with mass randomized ±10% (1.62–1.98 kg); report torques at 1.8 kg (go/no-go) and 1.98 kg (stress test) |
+| Neck | 3 servos: turn, then nod, then tilt (head tilt for personality). In the sim they're held still (not policy-controlled) until personality work; then animate them and randomize head motion during training |
+| Battery placement | Center of the torso for the rough model; front/back is a later sim experiment |
+| Tail joints | 3 servos: 2 together at the tail base (side to side, then up/down) + 1 side-to-side at 11 cm along for an S-curve wag. Tail is 27.5 cm, light and rigid between joints. Later sim tests: tail length 22.5 / 27.5 / 32.5 cm; mid-tail servo locked (2-servo tail) vs. active |
 | Feet | Identical legs with bolt-on feet (test point feet vs. longer hind feet) |
 | Leg geometry | Borrowed from the original Stanford Pupper (hobby-servo version); tail, body, head original |
 | CAD | Onshape |
-| Simulator | Decided by a week-1 bake-off: MuJoCo Playground vs. Isaac Lab 3.0 kit-less. Leaning Playground (Open Duck Mini + BAM servo model already work there) |
+| Simulator | MuJoCo Playground (Open Duck Mini + BAM servo model already work there). Bake-off vs. Isaac Lab skipped; a short Go1 example run checks the setup instead |
 | Compute | Rented cloud GPU (~$10–40/month); university GPU cluster as backup. Shut machines down when idle |
 | Control code | Python first; C++ once the Python version walks |
 | Teacher-student | Only if it measurably helps; try asymmetric actor-critic first |
 
 ## Hardware plan
 
-- 12 leg servos (3 per leg) + 2 tail joints (with a mechanical hard stop; breakaway tip) + neck servos on the bus + ear servos on PWM.
+- 12 leg servos (3 per leg) + 3 tail joints (with a mechanical hard stop; breakaway tip) + neck servos on the bus + ear servos on PWM.
 - Raspberry Pi 5 runs the policy onboard (ONNX, 50 Hz or faster). IMU for orientation and angular velocity (use the projected gravity vector, not Euler angles). Two small eye screens.
 - Target mass ~1.5–1.65 kg. Weigh every printed part and update the model.
 - Torque check in sim: servo torque–speed curve as the joint limit; log peak and average torque per joint. Pass: average below rated, peaks below ~60–70% of stall. Likely worst case: hind knees in a deep crouch.
@@ -103,9 +108,9 @@ Closest existing project: Open Duck Mini (STS3215 servos, Raspberry Pi, MuJoCo P
 ## Roadmap
 
 **Phase 1: simulation (Nov 2026 → ~Feb 2027)**
-- [ ] Week 1: simulator bake-off (Playground Go1 joystick vs. Isaac Lab kit-less Go2) on a cloud GPU
-- [ ] Reproduce standard quadruped walking; I can explain every reward term (read Rudin 2021 alongside)
-- [ ] Rough box-and-cylinder red panda model with 12 V servo limits
+- [ ] Rough box-and-cylinder red panda model with 12 V servo limits (on the Mac)
+- [ ] First GPU session: run the Playground Go1 example ~10 min and compare its reward curve to the published one (setup check), then train the red panda
+- [ ] I can explain every reward term (read Rudin 2021 alongside)
 - [ ] Walking + turning on the rough model (budget 4–6 weeks)
 - [ ] Rearing into the tail tripod; joint torques logged
 - [ ] Winter break: servo test rig (2–3 servos), test-printed leg, bus timing measurements
