@@ -502,3 +502,45 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Six kinds of hardware failure to check every time: thermal, mechanical, electrical, timing, sensing, modeling.
 - **Next:** fix knee heat (options with tradeoffs to decide), add joint-offset randomization.
 - **Cost so far:** ~$4.07. Stopped pod `745gnnmsvdx6zg` plus the 20 GB volume.
+
+### Run 13: torque price x3 + joint offsets (and the knee load is jitter)
+- **Did:** Run 13 = run 12 + `torques` -0.0035 -> -0.0105 + joint calibration offsets (`servo_config.joint_offset_deg` 2.0): each leg servo's "0" is off by a fixed random angle per episode; the policy reads angle + offset, the servo drives the joint to target - offset, the critic sees true angles. Run 12 untrained handled +/-2 deg (0/16 falls), +/-6 deg slowed it to 0.13 m/s. Pod `oc24xznq0zaal3`: ~11 min, ~$0.17.
+- **Results:** walk and robustness held (0/16 falls everywhere except 1/16 at a 0.9 m/s push), but knee RMS current only went 1.01 -> 0.97 A (112% -> 108% of rated): the policy paid the tripled torque price (-38 -> -107 per episode) instead of changing.
+- **Learned (and a wrong explanation corrected):**
+  - I said half the knee load was legs pushing against each other. Measuring ground forces while standing showed it isn't: sideways forces are 0.3-0.5 N vs 4-5 N of weight per foot.
+  - It's jitter: only ~0.4 N*m of the knee's 0.75-0.82 N*m holds the body up; the policy's targets jump ~3 deg every 20 ms and the knee torque reverses direction in ~40% of steps. The policy reacts to sensor noise. On a real servo: buzzing, heat, gear wear. The smoothness price is tiny (action_rate -3.5 per episode vs +790 tracking).
+  - A general torque penalty doesn't target jitter; a smoothness price (action_rate) would.
+- **Next considered:** J1 = action_rate -0.01 -> ~-0.1.
+
+### Posture numbers + run 14: stance and leg length (14a vs 14b)
+- **Why:** run 13's walk looked wrong (deep crouch, zigzag legs, feet far ahead of the shoulders). Checked with numbers instead of GIFs:
+  - The home pose itself is a crouch: knee 80 deg, hip +/-38.3 deg puts the feet under the hips at 19.2 cm (= base_height 0.19). Run 13 stood at 16.3-16.5 cm with knees ~93 deg.
+  - pose_weights [hip_side, hip, knee] = [1.0, 0.2, 0.1]: run 13's crouch still earned 415 of 500 pose points; base_height cost only ~-13 per episode.
+  - Holding torque (standing, 1.8 kg): knee 80 deg 0.34 N*m, 45 deg 0.20, 30 deg 0.14.
+- **Tooling:** `tools/watch_policy.py` now also walks a fixed command (default 0.15 m/s, `--vx`, `--seconds`) and prints mean torso height plus each foot's touchdown / liftoff position relative to its own hip in the robot's frame (saved to `runs/<run>/posture.json`); the GIF is that fixed-command walk from a low side-view camera that turns with the robot. `sim/red_panda_walk.py` gained `model_config` (`leg_scale`, `stance_knee_deg`) applied by `build_spec()` when the model loads (runs 1-13 load the original model unchanged, checked).
+- **Red panda proportions:** shoulder height ~20-34 cm on a 50-64 cm head-and-body (~40-45%), i.e. a torso ~13-17 cm up for our 32 cm body. Pupper legs (23.85 cm) are 75% of our body length.
+- **Did:** two runs from run 13, back to back (~28 min incl. idle, ~$0.42):
+  - 14a = home knee 45 deg / hip +/-21.7 deg, Pupper legs, base_height 0.229.
+  - 14b = legs x0.7 (8.64 + 8.05 cm), home knee 45 deg, base_height 0.163, swing lift 2.5 cm, max_foot_height 0.035, commands [0.14, 0.07, 0.5]. foot_rest_height stays (it's the foot ball's radius, unchanged); fall cutoff 10 cm leaves 6 cm margin.
+- **Results** (posture at 0.12 m/s; hardware check at 1.8 kg with mixed commands; stress test at 0.12 m/s):
+
+  | | Run 13 | 14a (Pupper, 45 deg) | 14b (x0.7, 45 deg) |
+  |---|---|---|---|
+  | Torso height (target) | 16.4 cm (19.0) | 20.4 cm (22.9) | 14.3 cm (16.3) |
+  | Front feet land / lift off (ahead of hip) | +8.3 / +5.9 cm | +10.9 / +8.0 | +7.8 / +4.4 |
+  | Hind feet land / lift off | +4.2 / -2.2 | +1.2 / -4.5 | +0.0 / -3.2 |
+  | Feet outward | 4.4-6.6 cm | 4.9-6.7 | 3.4-5.0 |
+  | **Knee RMS current (rated 0.9 A)** | 0.97 A (108%) | 0.80 A (89%) | **0.62 A (69%)** |
+  | **Knee peak (99th)** | 2.21 N*m (75% stall) | 1.74 (59%) | **1.24 (42%)** |
+  | Hip peak (99th) | 1.88 | 1.90 | 1.55 (53%) |
+  | All 18 servos | 9.2 A avg | 8.2 A | 7.3 A |
+  | Stress test (icy, +20% mass, kp x0.5, 40 ms, 0.9 m/s push, all) | 0/16 everywhere | 1/16 at x1.2 mass and at 0.9 m/s | **0/16 everywhere** |
+  | Speed test | ok | ok | ok within 0.14 range (backward -0.06 of -0.09, curve 0.34 of 0.40) |
+
+- **Learned:**
+  - Most of the knee savings come from bending the knee less (0.38 -> 0.20 N*m holding); shorter legs add a smaller cut (-> 0.14) and are the only way to straighten the legs without a 23 cm-tall body. (My first comparison changed leg length and bend at once and credited the lever; an outside review caught it.)
+  - The crouch wasn't what made the front feet reach forward: they land 7.8-10.9 cm ahead of the hips in all three bodies. That needs a foot-placement cost (P4).
+  - Both new bodies still sit ~2-2.5 cm below their height target (base_height is cheap).
+  - Double touchdowns (front-left / right-hind ~2 per stride) persist: jitter / bounce, same as run 13.
+  - Compare runs by measurements, not total reward, once the body or rewards change.
+- **Cost so far:** ~$4.65. Stopped pod `oc24xznq0zaal3` plus the 20 GB volume.

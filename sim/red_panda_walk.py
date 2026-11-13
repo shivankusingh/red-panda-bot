@@ -48,6 +48,14 @@ def default_config() -> config_dict.ConfigDict:
       # own (Kp 35); we keep the XML values (placeholders until BAM).
       # RED PANDA: policy input switch for the blind vs. sees-speed comparison.
       policy_sees_body_speed=False,
+      # RED PANDA (run 14): robot shape, applied when the model loads (build_spec).
+      # leg_scale shortens both leg segments (Pupper = 12.35 + 11.5 cm); the foot
+      # ball keeps its size. stance_knee_deg > 0 rewrites the home pose: that knee
+      # bend with each foot straight under its hip (0 = the XML's home, knee 80).
+      model_config=config_dict.create(
+          leg_scale=1.0,
+          stance_knee_deg=0.0,
+      ),
       # RED PANDA (run 10): domain randomization. Each training robot gets its own
       # world, so the policy can't rely on exact numbers. Used by tools/train_walk.py
       # through make_domain_randomizer(). The stress test (run 9's policy) showed
@@ -150,7 +158,10 @@ def default_config() -> config_dict.ConfigDict:
               # Regularization.
               # RED PANDA: Go1 x17. Standing torque cost measured in sim: Go1 45.5,
               # ours 2.6, so x17 keeps the same "bill" (-0.009 per step).
-              torques=-0.0035,
+              # Run 13: x3 (was -0.0035). Run 12's knee ran at 112% of rated current
+              # (heat ~ current^2), yet torque cost only -38 per episode vs +809 for
+              # speed tracking. (Later found: half the knee load is jitter, not effort.)
+              torques=-0.0105,
               action_rate=-0.01,
               # RED PANDA: Go1 x7. Standing-matched would be x17 (-0.017), but under
               # early-training jitter our light legs make energy 2.4x Go1's share;
@@ -234,6 +245,11 @@ def default_config() -> config_dict.ConfigDict:
           # Estimate: ~5-10 ms for a careful build, ~25-30 ms for a slow one; the
           # winter-break bus timing test will narrow this.
           delay_ms=[0.0, 40.0],
+          # Run 13: each leg servo's "0" is off by a fixed random angle per episode
+          # (horn teeth + calibration error). The policy reads angle + offset and the
+          # servo drives the joint to target - offset, like a real miscalibrated servo.
+          # Run 12 untrained: +/-2 deg -> 0/16 falls, 0.19 -> 0.18 m/s.
+          joint_offset_deg=2.0,
       ),
       command_config=config_dict.create(
           # Uniform distribution for command amplitude.
@@ -254,6 +270,69 @@ def default_config() -> config_dict.ConfigDict:
       naconmax=4 * 8192,
       njmax=40,
   )
+
+
+def _bisect(f, lo, hi, iters=60):
+  flo = f(lo)
+  for _ in range(iters):
+    mid = 0.5 * (lo + hi)
+    fm = f(mid)
+    if (fm > 0) == (flo > 0):
+      lo, flo = mid, fm
+    else:
+      hi = mid
+  return 0.5 * (lo + hi)
+
+
+def build_spec(config) -> mujoco.MjSpec:
+  """RED PANDA (run 14): the robot model with model_config applied.
+
+  Returns an MjSpec (the env compiles it; the viewer adds a floor texture first).
+  """
+  spec = mujoco.MjSpec.from_file(XML_PATH.as_posix())
+  mc = config.get("model_config", None)
+  if mc is None:  # configs from runs 1-13
+    return spec
+  k = mc.leg_scale
+  if k != 1.0:
+    for leg in LEGS:
+      for body in (f"{leg}_upper", f"{leg}_lower"):
+        for g in spec.body(body).geoms:
+          if not np.isnan(g.fromto[0]):        # leg capsule: scale both ends
+            g.fromto = np.array(g.fromto) * k
+          elif g.name == f"{leg}_foot":        # foot ball: move it, same size
+            g.pos = np.array(g.pos) * k
+      spec.body(f"{leg}_lower").pos = np.array(spec.body(f"{leg}_lower").pos) * k
+      spec.site(f"{leg}_foot").pos = np.array(spec.site(f"{leg}_foot").pos) * k
+  if mc.stance_knee_deg > 0:
+    m = spec.compile()
+    d = mujoco.MjData(m)
+    d.qpos[:] = m.key_qpos[0]
+    d.qpos[2], d.qpos[3:7] = 1.0, [1.0, 0.0, 0.0, 0.0]   # upright, in the air
+    ctrl = np.array(m.key_ctrl[0])
+    for leg in LEGS:
+      knee_sign = -1.0 if leg.startswith("f") else 1.0     # front knees bend negative
+      adr = {j: m.jnt_qposadr[m.joint(f"{leg}_{j}").id] for j in ("hip_side", "hip", "knee")}
+      d.qpos[adr["hip_side"]] = 0.0
+      d.qpos[adr["knee"]] = knee_sign * np.deg2rad(mc.stance_knee_deg)
+      foot, hip = m.site(f"{leg}_foot").id, m.body(f"{leg}_hip").id
+
+      def foot_ahead(h, adr=adr, foot=foot, hip=hip):
+        d.qpos[adr["hip"]] = h
+        mujoco.mj_kinematics(m, d)
+        return d.site_xpos[foot][0] - d.xpos[hip][0]
+
+      d.qpos[adr["hip"]] = _bisect(foot_ahead, -1.6, 1.6)  # foot straight under the hip
+    mujoco.mj_kinematics(m, d)
+    radius = m.geom_size[m.geom("fl_foot").id][0]
+    lowest = min(d.site_xpos[m.site(f"{leg}_foot").id][2] for leg in LEGS)
+    d.qpos[2] = 1.0 - lowest + radius                       # feet just touching
+    for leg in LEGS:
+      for j in ("hip_side", "hip", "knee"):
+        ctrl[m.actuator(f"{leg}_{j}").id] = d.qpos[m.jnt_qposadr[m.joint(f"{leg}_{j}").id]]
+    home = next(key for key in spec.keys if key.name == "home")
+    home.qpos, home.ctrl = np.array(d.qpos), ctrl
+  return spec
 
 
 def make_domain_randomizer(env):
@@ -305,7 +384,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
   ):
     super().__init__(config, config_overrides)
     self._xml_path = XML_PATH.as_posix()
-    self._mj_model = mujoco.MjModel.from_xml_path(self._xml_path)
+    self._mj_model = build_spec(self._config).compile()  # run 14: + model_config
     self._mj_model.opt.timestep = self._config.sim_dt
     self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
     self._post_init()
@@ -346,6 +425,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
     self._servo = self._config.get("servo_config", None)
     self._servo_on = self._servo is not None and (
         self._servo.torque_speed_limit or max(self._servo.delay_ms) > 0)
+    self._offset_deg = self._servo.get("joint_offset_deg", 0.0) if self._servo else 0.0
 
     # Soft limits (legs only). Go1 quirk kept for pass 1: x0.95 shrinks
     # toward zero, so our knees (ranges ending at 0) get no warning zone.
@@ -629,6 +709,11 @@ class RedPandaWalk(mjx_env.MjxEnv):
           jax.random.uniform(key, minval=lo, maxval=hi)), 0, 2 * n).astype(jp.int32)
       info["last_motor_targets"] = jp.stack([data.ctrl, data.ctrl])  # 1 and 2 steps ago
       info["rng"] = rng
+    if self._offset_deg > 0:  # RED PANDA (run 13): calibration error per leg servo
+      rng, key = jax.random.split(rng)
+      info["joint_offset"] = jp.deg2rad(self._offset_deg) * jax.random.uniform(
+          key, (len(LEG_JOINTS),), minval=-1.0, maxval=1.0)
+      info["rng"] = rng
 
     metrics = {}
     for k in self._config.reward_config.scales.keys():
@@ -649,6 +734,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
       state.info["gait_phase"] = jp.mod(
           state.info["gait_phase"] + self._gait.freq_hz * self.dt, 1.0)
     leg_targets = self._default_pose + action * self._config.action_scale
+    if self._offset_deg > 0:  # run 13: the servo's "target" lands offset in reality
+      leg_targets = leg_targets - state.info["joint_offset"]
     motor_targets = self._motor_targets(
         leg_targets,
         state.info["time"],
@@ -765,6 +852,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
     gravity = self.get_gravity(data)
     linvel = self.get_local_linvel(data)
     leg_angles = data.qpos[self._leg_qpos]
+    if self._offset_deg > 0:  # run 13: what a miscalibrated servo reads (policy only)
+      leg_angles = leg_angles + info["joint_offset"]
     leg_vel = data.qvel[self._leg_qvel]
     tail_angles = data.qpos[self._tail_qpos]
     tail_vel = data.qvel[self._tail_qvel]
@@ -805,7 +894,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
         gravity,  # 3
         linvel,  # 3
         angvel,  # 3
-        leg_angles - self._default_pose,  # 12
+        data.qpos[self._leg_qpos] - self._default_pose,  # 12 (true angles, run 13)
         leg_vel,  # 12
         tail_angles,  # 3
         tail_vel,  # 3
