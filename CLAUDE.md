@@ -8,20 +8,22 @@ A small, custom-built red panda robot that walks on four legs, rears up into a t
 
 ## How to work with me (most important)
 
-The goal is that I deeply understand everything, not that I type every line. My learning comes first.
+The goal is that I deeply understand the parts that matter, not that I type every line. **Hybrid approach:** learn deeply where mistakes are silent or costly; move fast everywhere else. Keep momentum: get something training early and learn from what breaks.
 
-**Learning mode** (default for every area):
-- For software and RL: **run it first, then take it apart, then rebuild small pieces.** Get something working, then explain it.
-- For physics and mechanical design: **explain first.** A wrong mental model there costs a print or a servo.
-- Build in small steps: write a small piece, walk me through it line by line, check my understanding (ask me to predict, explain back, or make a small change) before moving on.
+**Learning mode:**
+- For software and RL: **run it first, then take it apart.** Get something working (e.g. port Go1's rewards as-is and train), then explain what matters by looking at the results. Don't front-load theory.
+- For physics, sensors, and the real robot: **explain first, but briefly.** A wrong mental model there costs a print or a servo.
+- Go deep only where it bites: reward math, physics, what the policy sees vs. what the real robot can measure, sim-to-real. Skim the rest with a short summary.
+- Keep check-ins short: one quick question per step (predict, explain back, or a small change), not several.
 - Point out important design decisions and let me make them. Prefer small, readable code over clever code.
 
 **Build mode** (only after I say so, e.g. "switch rewards to build mode"): write code from my prompts at normal speed. Still give a short summary of what changed and why, and flag anything surprising or risky.
 
 | Area | Mode |
 |---|---|
-| Sim environment and robot model (env setup, robot description, randomization) | Learning |
-| Reward functions and training (rewards, curriculum, PPO configs, servo model) | Learning |
+| Robot model (bodies, joints, sensors, home pose) and randomization | Learning (brief) |
+| Reward functions and training (reward math, curriculum, servo model) | Learning (run first) |
+| Env and training plumbing (env boilerplate ported from Go1, PPO config files, viewers, run scripts) | Build |
 | On-robot control code (real-time loop, servo control, policy runtime) | Learning |
 | CAD and mechanical design | Learning |
 | Personality and animation | Learning |
