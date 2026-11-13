@@ -1,12 +1,22 @@
 <mujoco model="red_panda">
   <!-- joint ranges below are in DEGREES (MuJoCo default); inside the sim, angles are radians -->
+  <!-- collision (walking): only feet touch the floor; nothing else collides with anything.
+       Two geoms touch if (A.contype & B.conaffinity) or (B.contype & A.conaffinity) is nonzero.
+       Default 0/0 = touches nothing; floor contype 1 + foot conaffinity 1 = feet touch floor only.
+       The tripod env will turn tail-floor contact back on. -->
+  <default>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
   <worldbody>
     <light pos="0 0 2"/>
-    <geom name="floor" type="plane" size="2 2 0.1"/>
+    <geom name="floor" type="plane" size="2 2 0.1" contype="1" conaffinity="0"/>
 
     <body name="torso" pos="0 0 0.3">
       <freejoint/>
       <geom name="torso" type="box" size="0.16 0.05 0.025" mass="0.72" rgba="0.8 0.35 0.1 1"/>
+      <!-- IMU: center of the torso for now; move it to where the real chip sits once the CAD places it -->
+      <site name="imu" pos="0 0 0"/>
 
       <!-- front-left leg -->
       <body name="fl_hip" pos="0.12 0.04 0">
@@ -20,6 +30,9 @@
           <body name="fl_lower" pos="0 0 -0.1235">
             <joint name="fl_knee" type="hinge" damping="0.1" armature="0.02" range="-150 0" axis="0 1 0"/>
             <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+            <!-- foot: same size as the capsule end, massless; named so the contact/speed/height sensors can find it -->
+            <geom name="fl_foot" type="sphere" pos="0 0 -0.115" size="0.01" mass="0" conaffinity="1" rgba="0.15 0.1 0.08 1"/>
+            <site name="fl_foot" pos="0 0 -0.115" size="0.01"/>
           </body>
         </body>
       </body>
@@ -36,6 +49,9 @@
           <body name="fr_lower" pos="0 0 -0.1235">
             <joint name="fr_knee" type="hinge" damping="0.1" armature="0.02" range="-150 0" axis="0 1 0"/>
             <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+            <!-- foot: same size as the capsule end, massless; named so the contact/speed/height sensors can find it -->
+            <geom name="fr_foot" type="sphere" pos="0 0 -0.115" size="0.01" mass="0" conaffinity="1" rgba="0.15 0.1 0.08 1"/>
+            <site name="fr_foot" pos="0 0 -0.115" size="0.01"/>
           </body>
         </body>
       </body>
@@ -51,6 +67,9 @@
           <body name="bl_lower" pos="0 0 -0.1235">
             <joint name="bl_knee" type="hinge" damping="0.1" armature="0.02" range="0 150" axis="0 1 0"/>
             <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+            <!-- foot: same size as the capsule end, massless; named so the contact/speed/height sensors can find it -->
+            <geom name="bl_foot" type="sphere" pos="0 0 -0.115" size="0.01" mass="0" conaffinity="1" rgba="0.15 0.1 0.08 1"/>
+            <site name="bl_foot" pos="0 0 -0.115" size="0.01"/>
           </body>
         </body>
       </body>
@@ -67,6 +86,9 @@
           <body name="br_lower" pos="0 0 -0.1235">
             <joint name="br_knee" type="hinge" damping="0.1" armature="0.02" range="0 150" axis="0 1 0"/>
             <geom type="capsule" fromto="0 0 0  0 0 -0.115" size="0.01" mass="0.02" rgba="0.15 0.1 0.08 1"/>
+            <!-- foot: same size as the capsule end, massless; named so the contact/speed/height sensors can find it -->
+            <geom name="br_foot" type="sphere" pos="0 0 -0.115" size="0.01" mass="0" conaffinity="1" rgba="0.15 0.1 0.08 1"/>
+            <site name="br_foot" pos="0 0 -0.115" size="0.01"/>
           </body>
         </body>
       </body>
@@ -128,4 +150,41 @@
     <position name="neck_nod" joint="neck_nod" kp="10" forcerange="-2.9 2.9" inheritrange="1"/>
     <position name="head_tilt" joint="head_tilt" kp="10" forcerange="-2.9 2.9" inheritrange="1"/>
   </actuator>
+
+  <!-- same names as Go1's model so the ported env code finds them.
+       Policy may only use what a real IMU gives (gyro, gravity/upvector); the rest are for rewards and the critic. -->
+  <sensor>
+    <gyro          site="imu" name="gyro"/>
+    <velocimeter   site="imu" name="local_linvel"/>
+    <accelerometer site="imu" name="accelerometer"/>
+    <framepos      objtype="site" objname="imu" name="position"/>
+    <framezaxis    objtype="site" objname="imu" name="upvector"/>
+    <framexaxis    objtype="site" objname="imu" name="forwardvector"/>
+    <framelinvel   objtype="site" objname="imu" name="global_linvel"/>
+    <frameangvel   objtype="site" objname="imu" name="global_angvel"/>
+    <framequat     objtype="site" objname="imu" name="orientation"/>
+
+    <!-- feet: touching the floor (1/0), position relative to the IMU, speed in world directions -->
+    <contact     name="fl_foot_floor_found" geom1="fl_foot" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <contact     name="fr_foot_floor_found" geom1="fr_foot" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <contact     name="bl_foot_floor_found" geom1="bl_foot" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <contact     name="br_foot_floor_found" geom1="br_foot" geom2="floor" reduce="mindist" num="1" data="found"/>
+    <framepos    objtype="site" objname="fl_foot" name="fl_foot_pos" reftype="site" refname="imu"/>
+    <framepos    objtype="site" objname="fr_foot" name="fr_foot_pos" reftype="site" refname="imu"/>
+    <framepos    objtype="site" objname="bl_foot" name="bl_foot_pos" reftype="site" refname="imu"/>
+    <framepos    objtype="site" objname="br_foot" name="br_foot_pos" reftype="site" refname="imu"/>
+    <framelinvel objtype="site" objname="fl_foot" name="fl_foot_global_linvel"/>
+    <framelinvel objtype="site" objname="fr_foot" name="fr_foot_global_linvel"/>
+    <framelinvel objtype="site" objname="bl_foot" name="bl_foot_global_linvel"/>
+    <framelinvel objtype="site" objname="br_foot" name="br_foot_global_linvel"/>
+  </sensor>
+
+  <keyframe>
+    <!-- home: walking stance. 80 deg knee bend, hip 38.3 deg so each foot is under its hip; torso 1 mm above touching.
+         qpos order (body tree): torso xyz, torso quat, legs fl fr bl br (hip_side hip knee), neck (3), tail (3)
+         ctrl order (actuator list): legs fl fr bl br, tail (3), neck (3)  <- tail and neck are SWAPPED vs qpos -->
+    <key name="home"
+         qpos="0 0 0.194  1 0 0 0  0 0.668 -1.396  0 0.668 -1.396  0 -0.668 1.396  0 -0.668 1.396  0 0 0  0 0 0"
+         ctrl="0 0.668 -1.396  0 0.668 -1.396  0 -0.668 1.396  0 -0.668 1.396  0 0 0  0 0 0"/>
+  </keyframe>
 </mujoco>

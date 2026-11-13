@@ -112,4 +112,33 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Air-time threshold (0.1 s): shorter legs say ~0.075 s, slow servos say ≥ 0.14 s just to swing the hip 40°. Probably longer; log real swing times in the first run and set it just below a typical good step.
   - The model needs foot sites (feet are currently just the 1 cm capsule ends) + foot velocity sensors + foot–floor contact sensors.
   - Energy weight also needs rescaling (watts much smaller than Go1's).
-- **Next:** Read Rudin 2021's reward table alongside (should be quick now). Then prep the model for training: home keyframe (crouch choice, check torques in sim), IMU site + sensors, foot sites + sensors.
+- **Next:** ~~Prep the model for training~~ (done, see below). Rudin 2021 moved to training-config time.
+
+### Model prep for training
+- **Did:** Added to `sim/red_panda.xml`: a `home` keyframe, an IMU site + 9 sensors, foot spheres + sites + 12 foot sensors, and feet-only collision. Wrote `tools/check_home_pose.py` (settles the home pose, prints height, tilt, knee directions, foot offsets, torques). Switched to a hybrid way of working (CLAUDE.md updated).
+- **Learned:**
+  - **Home pose:** knee bend sweep in sim (torque on each knee, standing height): 0° → 0 N·m, 24.8 cm; 40° → 0.18, 23.2; 60° → 0.27, 21.4; **80° → 0.35, 18.9**; 100° → 0.41, 15.9. Hand check at 60°: 4.4 N × 6 cm = 0.26 N·m ✓. Front knees carry a bit more (balance point is 0.22 cm forward).
+  - **Home, leash, and foot lift are linked:** target = home + action × 0.5 rad. From 60° the knee can only bend enough to lift the foot 3.6 cm; from 80°, 4.4 cm; 6 cm needs a leash ≥ 0.67 rad from 80°. Max reach forward grows with the crouch (60° → 11.9 cm, 80° → 15.3 cm).
+  - **qpos vs. ctrl:** qpos = actual pose (25 numbers, body-tree order: torso xyz, quaternion, legs, neck, tail); ctrl = motor targets (18, actuator order: legs, tail, neck). Tail and neck are **swapped** between them.
+  - **IMU:** gyro, up arrow, and gravity read the same anywhere on the torso; speed and accelerometer don't (merry-go-round edge). Put it where the real chip will be (center for now). The accelerometer reads +9.8 **up** when still: it measures every push except gravity (the floor pushing up); 0 in free fall.
+  - **Policy inputs must exist on the real robot; rewards don't.** Go1's policy reads body speed (`local_linvel`), which an IMU can't measure. Give it to the critic only (asymmetric actor-critic), or estimate it.
+  - **Foot height reads 0.97 cm when planted** (1 cm foot radius, sunk 0.3 mm). A 4 cm gap under the foot = a 5 cm target.
+  - **Collision:** two geoms touch if (A.contype & B.conaffinity) or (B.contype & A.conaffinity). Default 0/0, floor contype 1, feet conaffinity 1 = only feet touch the floor (like Go1's feet-only XML). Different policies can use different collision rules.
+  - Tail lift in the home pose: lowest tail point 3.7 cm at −30°, **hits the floor at −40°**.
+- **Mistakes fixed:**
+  - My first home recommendation (60°) only allowed 3.6 cm of foot lift; caught by asking "are you sure?" and checking in sim.
+  - The "15 outputs" in the earlier log disagreed with CLAUDE.md (tail is animation-driven while walking): resolved below.
+- **Decisions and why:**
+  - **Home: 80° knee bend** (hip 38.3°, feet under hips, 18.9 cm). Lower body like a real red panda, more lift (4.4 cm) and reach. Cost: ~1.7× the copper heat of 60°, still small vs. stall; test on the servo rig.
+  - **Walking policy: 12 outputs (legs only), and it sees the tail angles and speeds** (A+). The tail is animated while walking and randomized in training, so the policy learns to balance against any tail motion.
+  - **Feet-only collision for walking.** The walking env keeps the tail lift above ~−25° (animation and randomization). Episode ends if upside down **or torso center below 10 cm** (half the home height; even a 100° crouch stands at 15.9 cm). Switch to torso/head contact for terrain or fall recovery; the tripod env turns tail contact back on.
+  - **Hybrid way of working:** run first, go deep only where mistakes are silent or costly; plumbing in build mode.
+  - **Fall recovery is a separate policy** (starts fallen, rewards getting upright; walking needs "fall = episode over"). Matches Go1Getup and Lee 2019. **Terrain isn't a policy**, it's a training condition for the walking policy: flat first (so failures point at the rewards), then ~1 cm bumps for real floors, real terrain only if wanted. Terrain means switching the 10 cm height cutoff to torso contact.
+- **Red panda notes (decide later):**
+  - Policy inputs drop body speed: 54 → 51 (critic still gets it).
+  - Knee leash and foot-lift target (4.4 cm max with a 0.5 leash at 80°; 6 cm needs a bigger leash).
+  - Style for reward pass 2: long forward reach and torso sway like a real red panda (Walk These Ways, gait clock); could measure ratios from videos.
+  - Watch for front/hind leg collisions at long strides (no leg-leg collision in sim).
+  - Real robot: the home pose must match exactly in the robot code; servos need zero calibration.
+  - Look up the STS3215 rated torque; heat test on the rig.
+- **Next:** Port the Go1 env to the red panda (build mode for the plumbing), Go1 rewards as-is with only size fixes, and get a first training run.
