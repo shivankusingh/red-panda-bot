@@ -172,4 +172,41 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Long reach (pass 2): raise the `feet_air_time` threshold (0.1 s, still Go1's) for fewer, longer steps, or a gait clock.
   - Tail and neck sway ranges are guesses; replace with video ratios or the personality animation.
   - After run 1: measure real top speeds (command 0.1 → 0.5 m/s, see where tracking breaks) and compare each `reward/*` term's share with Go1's run.
-- **Next:** First GPU session: Go1 setup check (~10 min, note GPU + time + cost), then red panda run 1, then blind vs. sees-speed.
+- **Next:** ~~First GPU session~~ (done, see below).
+
+### First GPU session: the red panda walks (in sim)
+- **Did:** Wrote `tools/train_walk.py` (Brax PPO with Playground's Go1 settings, both robots; saves `progress.csv`, `params.pkl`, `config.json` to `runs/<name>/`), `tools/pod_setup.sh` (installs pinned versions on the pod), and `tools/watch_policy.py` (runs a trained policy on the Mac with a scripted joystick, prints commanded vs. measured speed, saves a GIF). Rented an RTX 4090 on RunPod (Secure Cloud, EU-RO-1, $0.89/h) with a 20 GB network volume for the software and results. Ran: Go1 check → red panda run 1 → sees-speed → part of a full Go1 run.
+- **Results:**
+
+  | Run | Steps | Train time | Final reward | Episode length | Walk / turn tracking |
+  |---|---|---|---|---|---|
+  | Go1 check | 23M (stopped) | 26 min | 18.7 | 1000 | (setup check passed) |
+  | Go1 full | 92M (stopped) | 62 min | 26.4, climbing | 991 | |
+  | **Red panda run 1** (blind, 57 inputs) | 206M | **7.9 min** | 31.8 (best 32.3) | 986 | 0.895 / 0.808 |
+  | Red panda sees-speed (60 inputs) | 206M | 7.6 min | 31.7 | 985 | 0.901 / 0.796 |
+
+  Scripted joystick test on the Mac (run 1, measured after speeding up): forward 0.30 → **0.30**, curve 0.20 + 0.40 → **0.21 + 0.40**, stop → 0.01, backward −0.20 → **−0.19**, sideways 0.15 → **0.15**, turn −0.50 → **−0.48**. Never fell. Video: `runs/rp_run1/walk.gif` (not committed).
+- **Learned:**
+  - The red panda learned almost everything in the first 23M steps (3 min): length 37 → 1000, walk tracking 0.002 → 0.82. Then slow gains, flat around reward 32.
+  - It's not the "stand still" trap: standing still scores ~0.02 tracking with our sigma; it scored 0.82–0.90.
+  - **Blind vs. sees-speed: no difference** (0.895 vs 0.901 walk, 0.808 vs 0.796 turn; one run each, within noise). Decision A (no body speed) holds in sim.
+  - Red panda trains ~14× faster than Go1 here. Go1's XML uses `iterations="1"` (a deliberate speed trick: 1 round of contact-force solving); MuJoCo 4.0.1's Warp backend warns about it every step for every robot ("solver iterations limit reached"), flooding the log (114 MB) and likely slowing Go1. The red panda uses MuJoCo's default (100 rounds max), so it doesn't hit the limit. Not a broken setup: a version mismatch between Playground 0.2.0 and MuJoCo 4.0.1.
+  - Installing to network storage is slow (~13 GB, thousands of small files, ~20 min the first time); next sessions reuse it.
+  - Cost: 2.46 h of pod time ≈ **$2.19**, plus the network volume's monthly storage fee.
+- **Mistakes fixed:**
+  - Brax 0.14.2 (newest) calls `jax.device_put_replicated`, which JAX removed in 0.10: added JAX's suggested replacement at the top of `train_walk.py`.
+  - The pod can't stop itself: its built-in RunPod key gets "Unauthorized". Someone has to stop it (phone or Claude).
+  - `pkill -f run_all.sh` also matched the SSH command that contained that text and killed the session. Kill by PID instead.
+  - Copying a whole run folder pulled 85 MB of checkpoints and the 114 MB log; copy only `params.pkl`, `progress.csv`, `config.json`.
+  - "Red panda won't hit the warning" was a guess; the new script filtered those lines, so it's backed by the speed difference, not the log. Confirm next time.
+- **Decisions and why:**
+  - Ran the red panda before the full Go1 run (order "B"): Go1 had already passed the setup check at 23M steps (reward 0.001 → 18.7, never falls), and the full 200M would have taken ~3 h.
+  - Keep the policy blind to body speed (no estimator for now).
+- **Red panda notes (decide later):**
+  - Occasional falls in test episodes (length 985–993, not 1000): look at which situations.
+  - The sim is still too easy: no servo speed limit or model (BAM), no action delay, no domain randomization (mass ±10%, friction). Add before trusting it.
+  - Style is generic, not red panda (reward pass 2: reach, sway).
+  - Measure the real top speed: command 0.1 → 0.5 m/s, see where tracking breaks.
+  - Silence Go1's solver warning at the source (`warn_overflow`) and test it on the GPU; confirm the red panda run without the filter.
+  - Commit a cleaned run-order script (the pod's `run_all.sh` / `run_b.sh` aren't in the repo).
+- **Next:** Watch the GIF and describe the gait. Then plan run 2: one change at a time (likely domain randomization + servo limits first).
