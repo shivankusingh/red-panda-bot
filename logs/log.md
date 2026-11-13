@@ -310,7 +310,7 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   RF ████████··········██   <- lands ~0.2 stride late (spec: down from column 14)
   ```
 - **Learned:**
-  - Why run 6's hind feet skimmed: two holes. feet_clearance only cost ~10 points per episode, and gait_schedule counted a foot hovering 2 mm up as "in the air". Pricing the height along the whole swing closes both: at -300, run 6's skimming gait would have cost ~126 points per episode, more than the whole ~55 episode reward.
+  - Why run 6's hind feet skimmed: two holes. feet_clearance only cost ~10 points per episode, and gait_schedule counted a foot hovering 2 mm up as "in the air". Pricing the height along the whole swing closes both: at -300, run 6's skimming gait would have cost ~126 per episode in progress.csv's per-term units. (Corrected in run 10's entry: those per-term numbers aren't multiplied by the 0.02 s step, so they can't be compared with the ~55 total; in the same units speed tracking earns ~840.)
   - A target along the whole path (an arc) beats a target at one moment (the peak height): the policy can't cheat on the parts nobody checks.
 - **Mistakes fixed:** my first reachability check let the hind foot move anywhere (7.9 cm lift). Redone with the foot kept under the hip: 4.5 cm max, so 3.6 cm is reachable.
 - **Red panda notes (decide later):**
@@ -404,3 +404,61 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Red panda notes (decide later):** hip and knee peaks still fail the torque rule. The servo stiffness is still a placeholder (kp 10), so the BAM model will move these numbers.
 - **Cost so far:** ~$3.33 total. Stopped pods: `oc5icdqjmzdrwh` (run 9) and `9hgcar5rn7v23f` (run 8, GPU taken), plus the 20 GB volume.
 - **Next:** run 10, randomization (motor delay, pushes, servo stiffness, mass, friction on floor and feet, center of mass).
+
+### Run 10: domain randomization (tougher, but hind feet skim again)
+- **Did:** Run 10 = run 9 + domain randomization. Each training robot gets its own friction (0.3-1.0 on floor AND feet), servo stiffness (x0.7-1.3), whole-robot mass (1.62-1.98 kg), torso center of mass (+/-2 cm), motor delay (0-40 ms), and pushes up to 0.6 m/s every 1-3 s. New pod `tat0hmgxcgxnwh`: 7.1 min, ~$0.17. The viewer now shows the walk itself by default (no pushes, 0 delay; `--pushes`, `--delay_ms` to stress it).
+- **Push-size mistake caught:** the env's push force uses the whole robot's mass, so a kick k changes speed by k / pi (checked in sim). My first stress test used the torso's mass alone, so its push labels were 2.3x too small ("0.3 m/s" was really 0.70). Re-ran with correct sizes before choosing 0.6 m/s (where run 9 starts falling).
+- **Results, stress test** (16 robots per condition, 0.2 m/s, 10 s):
+
+  | | Run 8 | Run 9 | **Run 10** |
+  |---|---|---|---|
+  | Delay 40 ms | 15/16 fell | 0/16, 0.08 m/s | **0/16, 0.15 m/s** |
+  | Delay 20 ms | 0.11 m/s | 0.15 m/s | **0.17 m/s** |
+  | Push 0.7 m/s | 5/16 fell | 5/16 | **0/16** |
+  | Push 0.9 m/s | 16/16 | 13/16 | **6/16** |
+  | Servo stiffness x0.5 | 0.12 m/s | 0.11 m/s | **0.18 m/s** |
+  | Everything moderate at once | 0.11 m/s | 0.14 m/s | **0.18 m/s** |
+
+- **Results, the walk** (no pushes, 0 delay):
+
+  | | Run 9 | Run 10 |
+  |---|---|---|
+  | Hind foot lift | 3.4 / 3.8 cm | **0.4 / 0.3 cm** |
+  | Front foot lift | 3.8 / 3.6 cm | 2.5 / 3.0 cm |
+  | Head bob | 1.3 cm | 2.2 cm |
+  | Duty front / hind | 0.67 / 0.71 | 0.62 / 0.75 |
+  | Speed test | ok | ok, never fell |
+
+- **Torques at 1.8 kg:** knee peak 2.74 -> **1.91 N*m (65% of stall, passes)**; hip peak 2.12 (72%, just over); hip_side 0.93; all averages pass (knee 0.61 = 63% of rated).
+- **Learned:**
+  - The walk got defensive: hind feet kept near the floor for instant "emergency touchdowns". Pushes every 1-3 s made training a constantly shaking bus, so it bus-walks all the time.
+  - Skimming costs 120 per episode in per-term units vs. 825 for speed tracking: cheap enough to accept. My run 7 entry compared per-term units with the episode total (fixed above).
+  - The policy has no push clock (pushes are only in the critic's inputs), so rarer pushes don't make it fail on an early one; they just change how much of its life is spent being shoved. Back-to-back pushes are the case to keep practicing.
+  - A camera-sized change (50 g at the chest: COM 0.4 cm forward, +3% mass) is well inside what run 10 already handles (2 cm, +10%).
+- **Decisions and why:** delay 0-40 ms (careful build ~5-10 ms, slow one ~25-30 ms), pushes to 0.6 m/s (run 9's falling point; bigger shoves are the get-up policy's job), all at once. Depth camera noted in CLAUDE.md as a Tier 2/3 candidate (lower front corner of the torso, behind a dark window).
+- **Next:** run 11 as two one-setting experiments: 11a = swing_height -300 -> -600; 11d = pushes every 1-10 s instead of 1-3 s. Pick by hind-foot lift and stress test.
+
+### Run 11: two experiments on the skimming hind feet (11a vs 11d)
+- **Did:** Two one-setting runs from run 10, back to back on one pod (`k2fayf9zwsrt4p`, a ~25% slower host): 11a = swing_height -300 -> -600; 11d = pushes every 1-10 s instead of 1-3 s (gap picked once per episode). Added `--set key=value` to `tools/train_walk.py` for this; each override is saved in config.json and a misspelled name stops the run. ~25 min for both, ~$0.37.
+- **Results:**
+
+  | | Run 10 | 11a (swing x2) | 11d (rarer pushes) |
+  |---|---|---|---|
+  | Hind foot lift | 0.4 / 0.3 cm | **3.1 / 3.4 cm** | 0.9 / 1.0 cm |
+  | Front foot lift | 2.5 / 3.0 cm | 3.3 / 3.5 cm | 3.7 / 3.2 cm |
+  | Body bounce (torso up/down per stride) | 1.9 cm | 2.8 cm | ~2.8 cm |
+  | Duty front / hind | 0.62 / 0.75 | 0.58 / 0.70 | 0.63 / 0.76 |
+  | Push 0.9 m/s | 6/16 fell | 3/16 | **0/16** |
+  | Delay 40 ms | 0.15 m/s | 0.16 m/s | 0.16 m/s |
+  | Knee torque peak (rule < 2.06) | 1.91 | 2.31 | 2.02 |
+  | Hip torque peak | 2.12 | 2.14 | 2.13 |
+  | Turn in place (target -0.50) | -0.48 | -0.51 | -0.43 |
+
+- **Head motion test (11a):** turn +/-30 deg, tilt +/-20 deg up to 2 Hz, plus +/-10 deg nods at 2.5 Hz: 0/16 falls, same speed, same body bounce. The head + neck (~185 g) doesn't disturb the walk; personality animations are safe in this range.
+- **Learned:**
+  - Forcing the lift didn't cost stability (11a beat run 10 on pushes): skimming was the cheapest way to be stable, not the only way.
+  - Constant shoving was part of the cause: rarer pushes alone tripled the hind lift and gave the most robust walk yet (0/16 at 0.9 m/s), probably because it got more practice walking well.
+  - "Head bob" was the whole body bouncing (torso and head move the same up/down); head stabilization only corrects angles, not up/down motion.
+  - A depth camera on the torso front corner loads the front legs like a seesaw: front share = (x + 12) / 24 for supports at +/-12 cm (50 g at x = 15 cm: front +6%, hind -1% in sim). The battery moved back can balance it.
+- **Decisions and why:** run 12 = pushes every 1-10 s (11d) + swing_height -450 (halfway: rarer pushes need less push to lift) + wider head motion in training (turn +/-30, tilt +/-20, random nods, faster), which costs nothing and covers personality animations. Camera stays out of the model until it's chosen (Phase 2 masses).
+- **Cost so far:** ~$3.87. Stopped pod `k2fayf9zwsrt4p` plus the 20 GB volume.

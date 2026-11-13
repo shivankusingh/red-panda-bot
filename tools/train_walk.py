@@ -58,6 +58,9 @@ p.add_argument("--sees_speed", action="store_true", help="red panda policy sees 
 p.add_argument("--impl", default="warp", help="warp (NVIDIA GPU) or jax (Mac/CPU)")
 p.add_argument("--seed", type=int, default=0)
 p.add_argument("--tiny", action="store_true", help="tiny CPU run to test the script")
+p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+               help="override one red panda env setting (repeatable), e.g. "
+                    "reward_config.scales.swing_height=-600.0")
 args = p.parse_args()
 
 out = REPO / "runs" / args.name
@@ -79,9 +82,20 @@ else:
   env_cfg = red_panda_walk.default_config()
   env_cfg.impl = args.impl
   env_cfg.policy_sees_body_speed = args.sees_speed
+  for item in args.set:  # one-setting experiments without editing the env file
+    key, value = item.split("=", 1)
+    *path, last = key.split(".")
+    node = env_cfg
+    for k in path:
+      node = node[k]
+    if last not in node:
+      raise SystemExit(f"--set: no setting named {key}")
+    node[last] = json.loads(value)
+    print(f"override: {key} = {node[last]}")
   env = red_panda_walk.RedPandaWalk(config=env_cfg)
   eval_env = red_panda_walk.RedPandaWalk(config=env_cfg)
-  randomizer = None  # no domain randomization yet (run 1)
+  rc = env_cfg.get("randomize_config", None)  # run 10: friction, mass, servo stiffness...
+  randomizer = red_panda_walk.make_domain_randomizer(env) if rc and rc.enable else None
 
 extra = {}
 if args.tiny:

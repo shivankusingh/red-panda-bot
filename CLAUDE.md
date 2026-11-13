@@ -85,6 +85,7 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Simulator | MuJoCo Playground (Open Duck Mini + BAM servo model already work there). Bake-off vs. Isaac Lab skipped; a short Go1 example run checks the setup instead |
 | Compute | Rented cloud GPU (~$10–40/month); university GPU cluster as backup. Shut machines down when idle |
 | Control code | Python first; C++ once the Python version walks |
+| Depth camera (candidate, Tier 2/3) | For stepping over obstacles (blind policy only recovers after bumping). Mount in the lower front corner of the torso, angled ~35° down, behind a dark tinted window (reads as the dark chest fur). Not on the head: it would nearly double the neck nod's holding torque, and a moving head makes the height map harder. Shift the battery back to balance it. Leave room in the torso CAD. Add after Tier 1 works on the real robot; train with height maps + teacher-student |
 | Teacher-student | Only if it measurably helps; try asymmetric actor-critic first |
 
 ## Hardware plan

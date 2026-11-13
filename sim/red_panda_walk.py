@@ -48,6 +48,17 @@ def default_config() -> config_dict.ConfigDict:
       # own (Kp 35); we keep the XML values (placeholders until BAM).
       # RED PANDA: policy input switch for the blind vs. sees-speed comparison.
       policy_sees_body_speed=False,
+      # RED PANDA (run 10): domain randomization. Each training robot gets its own
+      # world, so the policy can't rely on exact numbers. Used by tools/train_walk.py
+      # through make_domain_randomizer(). The stress test (run 9's policy) showed
+      # friction, mass, and center of mass barely matter; they're cheap insurance.
+      randomize_config=config_dict.create(
+          enable=True,
+          friction=[0.3, 1.0],     # floor AND feet (MuJoCo uses the higher of the two)
+          stiffness=[0.7, 1.3],    # servo kp scale, all servos together (real kp unknown until BAM)
+          mass_scale=[0.9, 1.1],   # whole robot: 1.62-1.98 kg
+          com_shift=0.02,          # torso center of mass +/- 2 cm in x and y
+      ),
       # RED PANDA: end the episode if the torso center drops below this (m).
       min_torso_height=0.10,
       noise_config=config_dict.create(
@@ -189,9 +200,13 @@ def default_config() -> config_dict.ConfigDict:
           # 1.0 so the legs don't splay sideways.
           pose_weights=[1.0, 0.2, 0.1],
       ),
+      # RED PANDA (run 10): pushes on. The push force uses the whole robot's mass, so a
+      # kick of k changes the robot's speed by k / pi m/s (checked in sim). Go1's max
+      # (3.0) would be 0.95 m/s. Run 9 already survives 0.45 m/s and starts falling
+      # around 0.6-0.7 m/s; bigger shoves are the get-up policy's job.
       pert_config=config_dict.create(
-          enable=False,
-          velocity_kick=[0.0, 3.0],
+          enable=True,
+          velocity_kick=[0.0, 0.6 * 3.14159],  # up to 0.6 m/s speed change
           kick_durations=[0.05, 0.2],
           kick_wait_times=[1.0, 3.0],
       ),
@@ -204,7 +219,10 @@ def default_config() -> config_dict.ConfigDict:
       servo_config=config_dict.create(
           torque_speed_limit=True,
           no_load_speed=4.7,    # rad/s at the output horn
-          delay_ms=[0.0, 0.0],  # run 10: random motor delay per episode (0 = off)
+          # Run 10: random motor delay per episode (sensors read -> servos act).
+          # Estimate: ~5-10 ms for a careful build, ~25-30 ms for a slow one; the
+          # winter-break bus timing test will narrow this.
+          delay_ms=[0.0, 40.0],
       ),
       command_config=config_dict.create(
           # Uniform distribution for command amplitude.
@@ -225,6 +243,45 @@ def default_config() -> config_dict.ConfigDict:
       naconmax=4 * 8192,
       njmax=40,
   )
+
+
+def make_domain_randomizer(env):
+  """RED PANDA (run 10): Go1's randomization idea with our own ranges and fields.
+
+  Returns randomize(model, rng) for Brax PPO: one random world per training robot.
+  """
+  rc = env._config.randomize_config
+  m = env.mj_model
+  contact_geoms = np.array([m.geom("floor").id] + [m.geom(f).id for f in FEET])
+  torso = m.body("torso").id
+
+  def randomize(model, rng):
+    @jax.vmap
+    def one_world(rng):
+      k1, k2, k3, k4 = jax.random.split(rng, 4)
+      # Friction: floor and feet get the same value, so it really changes.
+      mu = jax.random.uniform(k1, minval=rc.friction[0], maxval=rc.friction[1])
+      friction = model.geom_friction.at[contact_geoms, 0].set(mu)
+      # Servo stiffness: kp (twist per radian of error) scaled for every servo.
+      s = jax.random.uniform(k2, minval=rc.stiffness[0], maxval=rc.stiffness[1])
+      gain = model.actuator_gainprm.at[:, 0].multiply(s)
+      bias = model.actuator_biasprm.at[:, 1].multiply(s)
+      # Mass: the whole robot heavier or lighter together (inertia scales with it).
+      f = jax.random.uniform(k3, minval=rc.mass_scale[0], maxval=rc.mass_scale[1])
+      mass, inertia = model.body_mass * f, model.body_inertia * f
+      # Center of mass: shift the torso's balance point sideways / front-back.
+      d = jax.random.uniform(k4, (2,), minval=-rc.com_shift, maxval=rc.com_shift)
+      ipos = model.body_ipos.at[torso, :2].add(d)
+      return friction, gain, bias, mass, inertia, ipos
+
+    friction, gain, bias, mass, inertia, ipos = one_world(rng)
+    fields = dict(geom_friction=friction, actuator_gainprm=gain, actuator_biasprm=bias,
+                  body_mass=mass, body_inertia=inertia, body_ipos=ipos)
+    in_axes = jax.tree_util.tree_map(lambda x: None, model)
+    in_axes = in_axes.tree_replace({k: 0 for k in fields})
+    return model.tree_replace(fields), in_axes
+
+  return randomize
 
 
 class RedPandaWalk(mjx_env.MjxEnv):

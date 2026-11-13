@@ -40,6 +40,9 @@ SCRIPT = [
 p = argparse.ArgumentParser()
 p.add_argument("run", help="folder name under runs/")
 p.add_argument("--seed", type=int, default=0)
+p.add_argument("--pushes", action="store_true", help="keep the run's random pushes on")
+p.add_argument("--delay_ms", type=float, default=0.0,
+               help="fixed motor delay (runs 9+ with the servo model); default 0")
 args = p.parse_args()
 run = REPO / "runs" / args.run
 cfg = json.load(open(run / "config.json"))
@@ -47,6 +50,11 @@ cfg = json.load(open(run / "config.json"))
 # Same env as training, but on the CPU.
 env_cfg = config_dict.ConfigDict(cfg["env"])  # the settings this run trained with
 env_cfg.impl = "jax"
+# Show the walk itself: no random shoves unless asked, one fixed delay, nominal robot.
+if "pert_config" in env_cfg:
+  env_cfg.pert_config.enable = env_cfg.pert_config.enable and args.pushes
+if "servo_config" in env_cfg:
+  env_cfg.servo_config.delay_ms = [args.delay_ms, args.delay_ms]
 env = red_panda_walk.RedPandaWalk(config=env_cfg)
 
 # Rebuild the network shape, then load the trained weights into it.
