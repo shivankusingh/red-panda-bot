@@ -74,7 +74,7 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Bus | Legs, tail, and neck on the serial bus; ears on PWM |
 | Rough-model body | 32 × 10 × 5 cm, hips ±12 cm front/back of center; Pupper legs (12.35 + 11.5 cm). Later sim test: Pupper's 27.6 cm body for rearing comparison |
 | Rough-model mass | 1.8 kg nominal, a bit above the parts estimate (~1.64–1.74 kg, servos ≈ 55 g each × 18) so the torque checks have margin. Train with mass randomized ±10% (1.62–1.98 kg); report torques at 1.8 kg (go/no-go) and 1.98 kg (stress test) |
-| Neck | 3 servos: turn, then nod, then tilt (head tilt for personality). In the sim they're held still (not policy-controlled) until personality work; then animate them and randomize head motion during training |
+| Neck | 3 servos: turn, then nod, then tilt (head tilt for personality). Like the tail while walking: animation-driven, randomized "looking around" during training (switchable), and the walking policy sees the neck angles and speeds |
 | Battery placement | Center of the torso for the rough model; front/back is a later sim experiment |
 | Tail joints | 3 servos: 2 together at the tail base (side to side, then up/down) + 1 side-to-side at 11 cm along for an S-curve wag. Tail is 27.5 cm, light and rigid between joints. Later sim tests: tail length 22.5 / 27.5 / 32.5 cm; mid-tail servo locked (2-servo tail) vs. active |
 | Feet | Identical legs with bolt-on feet (test point feet vs. longer hind feet) |

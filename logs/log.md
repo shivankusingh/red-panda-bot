@@ -141,4 +141,35 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Watch for front/hind leg collisions at long strides (no leg-leg collision in sim).
   - Real robot: the home pose must match exactly in the robot code; servos need zero calibration.
   - Look up the STS3215 rated torque; heat test on the rig.
-- **Next:** Port the Go1 env to the red panda (build mode for the plumbing), Go1 rewards as-is with only size fixes, and get a first training run.
+  - **Policy doesn't see body speed (51 inputs).** No sensor measures it; Go1 uses an estimator (planted foot + joint speeds + IMU). Joint speeds ≠ body speed (hanging on a stand: big joint speeds, body speed 0). Reward and critic still use it. **Test it:** first GPU session, train blind vs. sees-speed (one config flag) and compare speed-tracking error. Big gap → build the estimator.
+- **Next:** ~~Port the Go1 env to the red panda~~ (done, see below), then a first training run.
+
+### Walking env (Go1 port) + reward pass 1 size fixes
+- **Did:** Wrote `sim/red_panda_walk.py` (Go1's `joystick.py` ported; every change marked `RED PANDA:`) and `tools/smoke_test_walk.py`. Smoke test passes on the Mac (~16 s): 57 inputs / 12 outputs, holds home at 18.9 cm with tail and head moving, height cutoff works, 60 inputs with the body-speed switch on. Looked up the STS3215 C018 (retailer listings, not Feetech's PDF): no-load 0.222 s/60° = **4.7 rad/s**, rated **0.98 N·m**, stall 2.94 N·m. Home knee torque 0.345 N·m = 35% of rated ✓.
+- **Learned:**
+  - An "environment" is the file that runs the training game: `reset` (start pose, random command) and `step` (actions → motors → physics → observation → reward → done?). PPO doesn't change between robots; the env does.
+  - The joystick **command** (forward, sideways, turn) is what's asked of the whole robot; motor targets are the policy's job. `command_config.a` = the biggest command used in training (each new one is random in ±a, about every 5 s), so one policy learns straight, curves, turning, backward, and stopping. It's the max it's *trained* for, not what it can physically do; Go1's 1.5 m/s is a training choice (the real Go1 goes faster).
+  - Servo max speed ≠ robot speed: the robot's speed = stride × steps per second, decided by the gait the policy learns.
+  - Height and reach are separate: `max_foot_height` sets how high the foot lifts; stride length is the policy's choice, limited by the hip leash. At leash 0.5 the front foot can land 8 cm ahead / 12 cm behind (20 cm stride), so the leash isn't the limit.
+  - Two "max lift" numbers: foot kept **under the hip** (4.5 cm at leash 0.5, the one that matters mid-step) vs. foot anywhere (7.9 cm, includes the whole leg swinging forward). Go1's target uses 84% of its under-hip max (7.7 of 9.1 cm).
+  - Weight × amount = "bill". A lighter robot has smaller amounts, so the weight goes **up** to keep the same pressure (heavier → down).
+  - Early-training check (small random jitter, 300 steps): reward above 0 on 23% of steps vs. Go1's 9%, so it should be at least as learnable. But energy was 2.4× Go1's share (light legs flick fast; placeholder kp 10 and no servo speed limit add to it).
+- **Mistakes fixed:**
+  - Turn command 1.0 rad/s was a gut guess; calculated by scaling Go1 by foot distance from center (0.14 vs 0.23 m) it's 0.5.
+  - "Torques ~10× smaller" was a guess; measured standing torque cost: Go1 45.5 vs ours 2.6 = **17×**.
+  - First lift sweep let the foot go anywhere (7.9 cm); redid it with the foot under the hip (4.5 cm).
+  - Height-cutoff test teleported the torso to 8 cm; the feet ended up inside the floor and launched it back up. Test the rule directly instead.
+  - The log's rough "~5.5 cm foot target" scaled by leg length alone; at leash 0.5 it would be 100% of max lift.
+- **Decisions and why:**
+  - **Neck animated like the tail:** random slow "looking around" (turn ≤30°, nod ≤20°, tilt ≤15°, one look every 2–10 s), switchable; the policy sees neck angles + speeds (57 inputs). Head + neck = 0.24 kg (13%), so it affects balance. CLAUDE.md updated.
+  - **Leg-only rewards:** `pose`, `stand_still`, `torques`, `energy`, `dof_pos_limits` count only the 12 leg joints (the policy doesn't control the tail or neck; their random motion would be noise).
+  - **Commands:** forward 0.4 m/s (servo-speed estimate 0.3–0.5), sideways 0.2 (Go1's 53% ratio; kept for small shuffles, set to 0 if run 1 struggles), turn 0.5 rad/s.
+  - **Two sigmas:** walk 0.016 (speeds 4× smaller → 0.25/16), turn 0.043 (2.4× → 0.25/5.8). Same grading as Go1: standing still at 0.25 m/s scores 0.018, like Go1 at 1.0 m/s.
+  - **Foot target 4.0 cm** (3 cm lift + 0.97 radius), leash stays 0.5: low and long like a red panda, quick for slow servos.
+  - **torques −0.0035** (×17), **energy −0.007** (×7, not ×17: an energy penalty that's too high early on teaches "stand still" and wastes the run; too low only costs some efficiency).
+  - Soft-limit quirk kept for walking: the leash keeps the knees at 51–109° of bend, far from either end. Revisit for the tripod.
+- **Red panda notes (decide later):**
+  - Long reach (pass 2): raise the `feet_air_time` threshold (0.1 s, still Go1's) for fewer, longer steps, or a gait clock.
+  - Tail and neck sway ranges are guesses; replace with video ratios or the personality animation.
+  - After run 1: measure real top speeds (command 0.1 → 0.5 m/s, see where tracking breaks) and compare each `reward/*` term's share with Go1's run.
+- **Next:** First GPU session: Go1 setup check (~10 min, note GPU + time + cost), then red panda run 1, then blind vs. sees-speed.
