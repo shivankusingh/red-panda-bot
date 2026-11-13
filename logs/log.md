@@ -462,3 +462,43 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - A depth camera on the torso front corner loads the front legs like a seesaw: front share = (x + 12) / 24 for supports at +/-12 cm (50 g at x = 15 cm: front +6%, hind -1% in sim). The battery moved back can balance it.
 - **Decisions and why:** run 12 = pushes every 1-10 s (11d) + swing_height -450 (halfway: rarer pushes need less push to lift) + wider head motion in training (turn +/-30, tilt +/-20, random nods, faster), which costs nothing and covers personality animations. Camera stays out of the model until it's chosen (Phase 2 masses).
 - **Cost so far:** ~$3.87. Stopped pod `k2fayf9zwsrt4p` plus the 20 GB volume.
+
+### Run 12: rarer pushes + swing height -450 + personality-sized head motion
+- **Did:** Run 12 = run 10 + pushes every 1-10 s (11d) + swing_height -450 (between 11a's -600 and -300) + wider head motion while walking (turn +/-30, tilt +/-20, random nods +/-10 deg, up to 1.5 Hz; new `gait_nod_drift_deg`, 0 in older configs so they replay unchanged). New pod `745gnnmsvdx6zg` (4090s come and go in EU-RO-1; a 5090 vanished between the stock read and the create). ~13 min, ~$0.20.
+- **Results:**
+
+  | | 11a | 11d | **Run 12** |
+  |---|---|---|---|
+  | Hind foot lift | 3.1 / 3.4 cm | 0.9 / 1.0 cm | **3.1 / 2.7 cm** |
+  | Front foot lift | 3.3 / 3.5 cm | 3.7 / 3.2 cm | 3.6 / 3.5 cm |
+  | Body bounce | 2.8 cm | 2.4 cm | 2.9 cm |
+  | Duty front / hind | 0.58 / 0.70 | 0.63 / 0.76 | 0.61 / 0.72 |
+  | Stress test | 3/16 fell at 0.9 m/s | 0/16 | **0/16 in every condition** (icy, 40 ms, 0.9 m/s, +20% mass) |
+  | Knee torque peak (forward) | 2.31 | 2.02 | 2.27 |
+  | Turn in place (target -0.50) | -0.51 | -0.43 | -0.51 |
+
+  ```
+  LH █████████████······█
+  LF ····█████████████···
+  RH ███······██████████·
+  RF ████████······██·███
+  ```
+- **Hardware check** (run 12, the env's own random commands + head motion, 16 robots x 20 s; STS3215 C018 reseller specs at 12 V: stall 2.94 N*m / 2.7 A, rated 0.98 N*m / 0.9 A, no-load 0.18 A, 4.7 rad/s; overheat cutoff ~70 C from a community test). Current = 0.18 A + torque / 1.17 N*m/A; heat = I_rms^2 x 4.4 ohm.
+
+  | Servo | Avg | Peak (99th) | RMS current | vs rated 0.9 A | Heat |
+  |---|---|---|---|---|---|
+  | hip_side | 0.40 N*m | 1.52 | 0.65 A | 73% | 1.9 W |
+  | hip | 0.42 | 1.75 | 0.67 A | 74% | 2.0 W |
+  | **knee** | **0.82** | **2.26** | **1.01 A** | **112%** | **4.5 W** |
+  | tail (3) | <= 0.12 | <= 0.28 | <= 0.29 A | <= 33% | <= 0.4 W |
+  | neck (3) | <= 0.17 | <= 0.65 | <= 0.34 A | <= 38% | <= 0.5 W |
+
+  - All 18 servos: ~9.4 A average, 14-17 A peaks (upper estimate). A 3S 2200 mAh pack: ~10 min of walking. One daisy chain of thin servo cables can't carry that: give each leg its own power wire; capacitor near the bus.
+  - Battery voltage: stall torque and top speed scale with voltage (12.6 V full: 3.09 N*m, 4.93 rad/s; 10.5 V empty: 2.57, 4.11). The walk still works at 10.5 V (0/16 falls, same speed error), but peaks become a bigger share of stall (knee 2.26 = 83% at 11.1 V).
+  - Not modeled yet: servo stiffness / friction / backlash (BAM), joint zero offsets, real masses, IMU mounting tilt, floor compliance, measured delay, printed-part strength (2.9 N*m on a 2 cm screw radius = ~145 N), tripod holding loads.
+- **Learned:**
+  - Heat follows RMS current (I^2 R), not average torque: the knee's average (0.82 N*m) is under rated, but its RMS current is 112% of rated.
+  - Rarer pushes + a moderate lift price gave both: feet up and the most robust walk yet.
+  - Six kinds of hardware failure to check every time: thermal, mechanical, electrical, timing, sensing, modeling.
+- **Next:** fix knee heat (options with tradeoffs to decide), add joint-offset randomization.
+- **Cost so far:** ~$4.07. Stopped pod `745gnnmsvdx6zg` plus the 20 GB volume.

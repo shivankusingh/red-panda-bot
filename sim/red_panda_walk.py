@@ -96,8 +96,9 @@ def default_config() -> config_dict.ConfigDict:
       # Set enable=False to hold the head still (e.g. to debug a bad run).
       neck_config=config_dict.create(
           enable=True,
-          amp_deg=[30.0, 20.0, 15.0],  # max swing: turn, nod, tilt
-          freq_hz=[0.1, 0.5],          # slow: one look every 2-10 s
+          amp_deg=[30.0, 20.0, 20.0],  # max swing: turn, nod, tilt
+          # Run 12: up to 1.5 Hz (quick glances). Was 0.1-0.5 Hz (one look every 2-10 s).
+          freq_hz=[0.1, 1.5],
           # Run 5 (gait clock on): head low and forward, mostly steady, with a slight
           # nod each time a front foot lands; small random turn/tilt drift.
           gait_nod_base_deg=8.0,       # + = head down
@@ -107,7 +108,11 @@ def default_config() -> config_dict.ConfigDict:
           # Run 6: head stabilization. Keep the head's pitch and roll steady in the
           # WORLD by countering the torso's tilt (measured like the real IMU: gravity).
           gait_head_stabilize=True,
-          gait_turn_tilt_amp_deg=[10.0, 5.0],
+          # Run 12: personality-sized head motion while walking (was 10, 5) plus random
+          # nods on top of the steady 8 deg. Run 11a's head test: turn 30 / tilt 20 at
+          # 2 Hz with 10 deg nods didn't disturb the walk at all, so this is cheap insurance.
+          gait_turn_tilt_amp_deg=[30.0, 20.0],
+          gait_nod_drift_deg=10.0,
       ),
       # RED PANDA (run 5): the user's red panda walk spec. A clock ticks through each
       # stride; each foot should be down for `duty` of the cycle, starting at its
@@ -172,7 +177,10 @@ def default_config() -> config_dict.ConfigDict:
               # follow an arc (lift off -> peak mid-swing -> land). (h - target)^2 summed
               # over swinging feet. Closes the loophole where a foot hovering 2 mm counts
               # as "up", and prices skimming hind feet (~-126/episode for run 6's gait).
-              swing_height=-300.0,
+              # Run 12: -300 -> -450. Under randomization the hind feet skimmed again at
+              # -300 (run 10); -600 brought the lift back but bounced more and pushed the
+              # knee peak to 2.31 N*m (run 11a). Rarer pushes need less push to lift.
+              swing_height=-450.0,
               base_height=-20.0,   # (torso height - target)^2: no rising up on straight legs
               joint_acc=-2.5e-7,   # sum of leg joint acceleration^2: anti-jitter (legged_gym's value)
           ),
@@ -208,7 +216,10 @@ def default_config() -> config_dict.ConfigDict:
           enable=True,
           velocity_kick=[0.0, 0.6 * 3.14159],  # up to 0.6 m/s speed change
           kick_durations=[0.05, 0.2],
-          kick_wait_times=[1.0, 3.0],
+          # Run 12: every 1-10 s (Go1: 1-3 s). Shoves every 1-3 s made training a
+          # constantly shaking bus and the hind feet skimmed (run 10); 1-10 s tripled the
+          # lift and was the most robust (run 11d). Short gaps still happen sometimes.
+          kick_wait_times=[1.0, 10.0],
       ),
       # RED PANDA (run 9): servo model, step 1. A real servo twists less hard the
       # faster it turns (its spinning motor makes a voltage that fights the battery).
@@ -461,13 +472,14 @@ class RedPandaWalk(mjx_env.MjxEnv):
     if self._gait_on:
       c = self._config.neck_config
       turn_max, tilt_max = c.gait_turn_tilt_amp_deg
-      scale = jp.deg2rad(jp.array([turn_max, 0.0, tilt_max])) / jp.maximum(
+      nod_max = c.get("gait_nod_drift_deg", 0.0)  # run 12; 0 in older configs
+      scale = jp.deg2rad(jp.array([turn_max, nod_max, tilt_max])) / jp.maximum(
           jp.deg2rad(jp.array(c.amp_deg)), 1e-6)
-      drift = drift * scale  # small turn/tilt drift, no random nod
+      drift = drift * scale  # random turn / nod / tilt drift
       # Front feet land at phase 0.2 (LF) and 0.7 (RF): nod down (+) at each.
       nod = jp.deg2rad(c.gait_nod_base_deg) + jp.deg2rad(c.gait_nod_amp_deg) * jp.cos(
           2 * jp.pi * 2 * (phase - 0.2))
-      drift = drift.at[1].set(nod)
+      drift = drift.at[1].add(nod)  # steady nod + random nod drift (0 before run 12)
       if c.get("gait_head_stabilize", False):
         # Head pitch in the world ~= torso pitch + nod, so subtract the torso's pitch;
         # same for roll with the head-tilt joint (axis x, like the torso's roll).
