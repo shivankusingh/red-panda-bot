@@ -285,3 +285,35 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - The neck servo overshoot comes from placeholder gains (kp 10); BAM will replace them.
   - Cost so far: ~$2.89 total (session 1 $2.19 + runs 2-6 ~$0.70). Stopped pods: `hf9abldp5ohuh8` (run 4, GPU taken, can delete) and `hxbmsgtzxtmq8u` (runs 5-6), plus the 20 GB volume.
 - **Next:** Hind-foot lift fix, then realism: servo model (BAM), action delay, domain randomization (mass +/-10%, friction), pushes.
+
+### Run 7: hind feet lift
+- **Did:** Run 7 = run 6 + a `swing_height` cost (weight -300). While a foot is scheduled to be in the air, its height should follow an arc: resting height (0.97 cm), up to 3.6 cm higher at mid-swing, back down at touchdown. Cost = (height - arc)^2 summed over the swinging feet. Same pod restarted: 6.5 min, ~$0.13.
+- **Results** (walking forward at 0.2 m/s, measured in sim on the Mac):
+
+  | | Run 6 | **Run 7** |
+  |---|---|---|
+  | Hind foot lift (LH / RH) | 0.6 / 0.7 cm | **3.7 / 3.9 cm** |
+  | Front foot lift (LF / RF) | 3.6 / 2.9 cm | 3.7 / 4.0 cm |
+  | Hind feet off the ground when scheduled up | ~64% | **80% / 87%** |
+  | Hind knee swing | ~12 deg | **21 deg** |
+  | Head tilt swing / head bob | 2.4 deg / 1.0 cm | 1.9 deg / 1.0 cm |
+  | Torso lean (target +/-3 deg) | +/-3.1 deg, corr 0.99 | +/-3.5 deg, corr 0.99 |
+  | Torso pitch (target 3 deg) | 3.0 deg | 3.0 deg |
+  | Front / hind duty (spec 0.70) | 0.57 / 0.75 | 0.57 (LF 0.62, RF 0.52) / 0.71 |
+  | Speed test | ok | ok (0.20 -> 0.19, turn -0.50 -> -0.51), never fell |
+
+  Footfall chart (one stride, folded by the gait clock; each column = 1/20 stride):
+  ```
+  LH █████████████······█
+  LF ·····█████████████··
+  RH ███······███████████
+  RF ████████··········██   <- lands ~0.2 stride late (spec: down from column 14)
+  ```
+- **Learned:**
+  - Why run 6's hind feet skimmed: two holes. feet_clearance only cost ~10 points per episode, and gait_schedule counted a foot hovering 2 mm up as "in the air". Pricing the height along the whole swing closes both: at -300, run 6's skimming gait would have cost ~126 points per episode, more than the whole ~55 episode reward.
+  - A target along the whole path (an arc) beats a target at one moment (the peak height): the policy can't cheat on the parts nobody checks.
+- **Mistakes fixed:** my first reachability check let the hind foot move anywhere (7.9 cm lift). Redone with the foot kept under the hip: 4.5 cm max, so 3.6 cm is reachable.
+- **Red panda notes (decide later):**
+  - The right front foot lands ~0.2 stride late (down 52% instead of 70%). Front duty is 0.57 in both runs 6 and 7, so the lean is the likely cause, not the new term. Option: raise gait_schedule 1.0 -> 1.5.
+  - Cost so far: ~$3.02 total. Stopped pods: `hf9abldp5ohuh8` (run 4, GPU taken, can delete) and `hxbmsgtzxtmq8u` (runs 5-7), plus the 20 GB volume.
+- **Next:** front timing (run 8), then realism: domain randomization (mass +/-10%, friction), pushes, action delay; BAM servo model once the servo rig exists.

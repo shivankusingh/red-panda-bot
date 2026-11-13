@@ -155,6 +155,11 @@ def default_config() -> config_dict.ConfigDict:
               # Run 6: exp(-(lean error^2)/sigma) toward the roll/pitch targets (0-1).
               # Same size as gait_schedule's pull; orientation (-5) still fines big tilts.
               body_sway=0.5,
+              # Run 7: while a foot is scheduled to be in the air, its height should
+              # follow an arc (lift off -> peak mid-swing -> land). (h - target)^2 summed
+              # over swinging feet. Closes the loophole where a foot hovering 2 mm counts
+              # as "up", and prices skimming hind feet (~-126/episode for run 6's gait).
+              swing_height=-300.0,
               base_height=-20.0,   # (torso height - target)^2: no rising up on straight legs
               joint_acc=-2.5e-7,   # sum of leg joint acceleration^2: anti-jitter (legged_gym's value)
           ),
@@ -170,6 +175,8 @@ def default_config() -> config_dict.ConfigDict:
           # lift + 0.97 cm foot radius. (Runs 1-4 used 0.04.)
           max_foot_height=0.046,
           body_sway_sigma=0.0012,  # (2 deg)^2 in rad^2: being flat when asked for 3 deg scores 0.1
+          swing_lift=0.036,         # run 7: arc peak above resting (15% of leg, the spec's lift)
+          foot_rest_height=0.0097,  # foot-center height when planted (1 cm ball, sunk 0.3 mm)
           # RED PANDA (run 2): Go1 rewards air time above 0.1 s per step. Run 1's quick
           # steps (~0.19 s in the air) already beat that, so nothing pushed for longer
           # steps. 0.25 s makes quick little steps cost and longer swings pay.
@@ -734,6 +741,15 @@ class RedPandaWalk(mjx_env.MjxEnv):
       terms["body_sway"] = jp.exp(-err2 / self._config.reward_config.get("body_sway_sigma", 1.0))
       desired = self._desired_contact(info["gait_phase"], info["command"])
       terms["gait_schedule"] = jp.mean(desired == contact)
+      rc = self._config.reward_config
+      if "swing_height" in rc.scales:  # run 7
+        prog = jp.mod(info["gait_phase"] - self._gait_offsets, 1.0)  # 0..1 since touchdown
+        swing = prog >= self._gait.duty
+        s_prog = jp.clip((prog - self._gait.duty) / (1.0 - self._gait.duty), 0.0, 1.0)
+        target = rc.foot_rest_height + rc.swing_lift * jp.sin(jp.pi * s_prog)
+        foot_z = data.site_xpos[self._feet_site_id][:, 2]
+        walking = jp.linalg.norm(info["command"]) >= 0.01
+        terms["swing_height"] = jp.sum(jp.where(swing, jp.square(foot_z - target), 0.0)) * walking
       terms["base_height"] = jp.square(data.qpos[2] - self._gait.base_height)
       terms["joint_acc"] = jp.sum(
           jp.square((leg_qvel - info["last_leg_qvel"]) / self.dt))
