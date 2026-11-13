@@ -317,3 +317,32 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - The right front foot lands ~0.2 stride late (down 52% instead of 70%). Front duty is 0.57 in both runs 6 and 7, so the lean is the likely cause, not the new term. Option: raise gait_schedule 1.0 -> 1.5.
   - Cost so far: ~$3.02 total. Stopped pods: `hf9abldp5ohuh8` (run 4, GPU taken, can delete) and `hxbmsgtzxtmq8u` (runs 5-7), plus the 20 GB volume.
 - **Next:** front timing (run 8), then realism: domain randomization (mass +/-10%, friction), pushes, action delay; BAM servo model once the servo rig exists.
+
+### Run 8: front feet back on the beat
+- **Did:** Run 8 = run 7 with gait_schedule 1.0 -> 1.5 (one number). The run 5-7 pod's GPU was taken, so a new pod on the same volume (`9hgcar5rn7v23f`): 7.3 min of training, ~$0.15. Deleted the two old stopped pods.
+- **Results** (walking forward at 0.2 m/s, measured in sim on the Mac):
+
+  | | Run 7 | **Run 8** | Spec |
+  |---|---|---|---|
+  | Right front foot down | 52% | **62%** | 70% |
+  | Left front foot down | 62% | **69%** | 70% |
+  | Hind feet down (LH / RH) | 72 / 69% | 75 / 68% | 70% |
+  | Torso lean (target +/-3 deg) | +/-3.5 deg, corr 0.99 | +/-3.3 deg, corr 0.99 | |
+  | Torso pitch | 3.0 deg | 2.8 deg | 3 deg |
+  | Hind lift (LH / RH) | 3.7 / 3.9 cm | 3.4 / 3.6 cm | 3.6 cm |
+  | Head tilt / head bob | 1.9 deg / 1.0 cm | 2.7 deg / 1.7 cm | |
+  | Speed test | ok | ok (all within 0.02), never fell | |
+
+  ```
+  LH ██████████████·····█
+  LF ····██████████████··   exactly on spec
+  RH ███······███████████
+  RF ████████·······█████   1 column late (was 4)
+  ```
+- **Learned:**
+  - The late foot only cost ~1 point per episode: weight 1.0 x 0.05 (one foot of 4 wrong 20% of the time) x 0.02 s x 1000 steps. A 50% raise was enough to tip it; the lean held.
+  - A weight is relative: raising one term makes every other term matter less. At 10, footfall (worth up to 200/episode) would swamp speed tracking (20) and the lean (10); marching in place in perfect rhythm would be the cheap answer.
+  - Side effect: head bob 1.0 -> 1.7 cm, probably from firmer front footfalls. Still far below run 5's 3.3 cm.
+- **Mistakes fixed:** stopped the pod before config.json finished copying back. Rebuilt it from run 7's config + the one change and checked it against the code (only `impl` differs: warp on the GPU, jax on the Mac).
+- **Cost so far:** ~$3.17 total. One stopped pod (`9hgcar5rn7v23f`) plus the 20 GB volume.
+- **Next:** realism: domain randomization (mass +/-10%, friction), pushes, action delay; BAM servo model once the servo rig exists.

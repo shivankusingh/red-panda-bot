@@ -151,7 +151,9 @@ def default_config() -> config_dict.ConfigDict:
               feet_air_time=0.0,  # run 5: off. The gait clock sets step timing now
               # (spec swing time 0.3/1.25 = 0.24 s would be fined by the 0.25 s threshold).
               # RED PANDA (run 5): the walk spec.
-              gait_schedule=1.0,   # fraction of feet matching the footfall chart (0-1), per step
+              # Run 8: 1.0 -> 1.5. At 1.0 the right front foot landing 0.2 stride late cost only
+              # ~1 point per episode, so the lean won (front duty 0.57 instead of 0.70).
+              gait_schedule=1.5,   # fraction of feet matching the footfall chart (0-1), per step
               # Run 6: exp(-(lean error^2)/sigma) toward the roll/pitch targets (0-1).
               # Same size as gait_schedule's pull; orientation (-5) still fines big tilts.
               body_sway=0.5,
