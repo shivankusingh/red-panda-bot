@@ -75,6 +75,10 @@ def default_config() -> config_dict.ConfigDict:
           # (counterbalance), tail held about level. Size randomized for robustness.
           gait_wag_amp_deg=[4.0, 10.0],
           gait_lift_deg=[-8.0, 2.0],
+          # Run 6: +1 = tail swings toward the side whose feet are in the air, i.e.
+          # opposite the body's new lean toward its supporting feet (counterbalance).
+          # Run 5 used -1 (opposite the passive roll, before the body had a lean target).
+          gait_wag_sign=1.0,
       ),
       # RED PANDA: the head "looks around" while walking (animation, not the
       # policy): each neck joint drifts slowly on its own random rhythm.
@@ -86,7 +90,12 @@ def default_config() -> config_dict.ConfigDict:
           # Run 5 (gait clock on): head low and forward, mostly steady, with a slight
           # nod each time a front foot lands; small random turn/tilt drift.
           gait_nod_base_deg=8.0,       # + = head down
-          gait_nod_amp_deg=3.0,
+          # Run 6: no scripted nod (run 5's 3 deg nod, 2.5 times/s, plus servo overshoot
+          # and torso pitch made the head bob 16 deg). Was 3.0.
+          gait_nod_amp_deg=0.0,
+          # Run 6: head stabilization. Keep the head's pitch and roll steady in the
+          # WORLD by countering the torso's tilt (measured like the real IMU: gravity).
+          gait_head_stabilize=True,
           gait_turn_tilt_amp_deg=[10.0, 5.0],
       ),
       # RED PANDA (run 5): the user's red panda walk spec. A clock ticks through each
@@ -100,6 +109,12 @@ def default_config() -> config_dict.ConfigDict:
           # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70
           offsets=[0.20, 0.70, 0.00, 0.50],
           base_height=0.19,                # torso target: the home stance (no tall spider legs)
+          # Run 6: torso choreography. Lean (roll) a few degrees toward the side whose
+          # feet are down (weight shift onto the supporting pair = the waddle), once per
+          # stride, and carry the head end slightly low. No twist: a rigid torso can't
+          # yaw without turning (that would need the side-bend spine).
+          roll_amp_deg=3.0,
+          pitch_deg=3.0,                   # + = nose down
       ),
       reward_config=config_dict.create(
           scales=config_dict.create(
@@ -137,6 +152,9 @@ def default_config() -> config_dict.ConfigDict:
               # (spec swing time 0.3/1.25 = 0.24 s would be fined by the 0.25 s threshold).
               # RED PANDA (run 5): the walk spec.
               gait_schedule=1.0,   # fraction of feet matching the footfall chart (0-1), per step
+              # Run 6: exp(-(lean error^2)/sigma) toward the roll/pitch targets (0-1).
+              # Same size as gait_schedule's pull; orientation (-5) still fines big tilts.
+              body_sway=0.5,
               base_height=-20.0,   # (torso height - target)^2: no rising up on straight legs
               joint_acc=-2.5e-7,   # sum of leg joint acceleration^2: anti-jitter (legged_gym's value)
           ),
@@ -151,6 +169,7 @@ def default_config() -> config_dict.ConfigDict:
           # Run 5: spec says lift ~15-20% of leg length (24 cm) = 3.6-4.8 cm -> 3.6 cm
           # lift + 0.97 cm foot radius. (Runs 1-4 used 0.04.)
           max_foot_height=0.046,
+          body_sway_sigma=0.0012,  # (2 deg)^2 in rad^2: being flat when asked for 3 deg scores 0.1
           # RED PANDA (run 2): Go1 rewards air time above 0.1 s per step. Run 1's quick
           # steps (~0.19 s in the air) already beat that, so nothing pushed for longer
           # steps. 0.25 s makes quick little steps cost and longer swings pay.
@@ -322,8 +341,9 @@ class RedPandaWalk(mjx_env.MjxEnv):
       # around phase 0.45 (body rolls right -> tail left, wag < 0); only the right
       # feet around 0.95 (tail right, wag > 0). + wag = tail toward the robot's right.
       angle = 2 * jp.pi * (phase - 0.2)
-      wag = -p["gait_wag_amp"] * jp.sin(angle)
-      wag2 = -p["wag2_amp"] * jp.sin(angle - p["wag2_lag"])  # follow-through
+      sign = self._config.tail_config.get("gait_wag_sign", -1.0)  # -1 = run 5
+      wag = sign * p["gait_wag_amp"] * jp.sin(angle)
+      wag2 = sign * p["wag2_amp"] * jp.sin(angle - p["wag2_lag"])  # follow-through
       targets = jp.array([wag, p["gait_lift"], wag2])
       return jp.clip(targets, self._tail_lowers, self._tail_uppers)
     angle = 2 * jp.pi * p["freq"] * t + p["phase"]
@@ -348,8 +368,9 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "phase": jax.random.uniform(k3, (3,), minval=0.0, maxval=2 * jp.pi),
     }
 
-  def _neck_targets(self, t, p, phase) -> jax.Array:
-    """Neck motor targets at time t: turn, nod, tilt (radians)."""
+  def _neck_targets(self, t, p, phase, torso_tilt) -> jax.Array:
+    """Neck motor targets at time t: turn, nod, tilt (radians).
+    torso_tilt = (pitch, roll) of the torso, + pitch = nose down, + roll = right side down."""
     drift = p["amp"] * jp.sin(2 * jp.pi * p["freq"] * t + p["phase"])
     if self._gait_on:
       c = self._config.neck_config
@@ -361,15 +382,43 @@ class RedPandaWalk(mjx_env.MjxEnv):
       nod = jp.deg2rad(c.gait_nod_base_deg) + jp.deg2rad(c.gait_nod_amp_deg) * jp.cos(
           2 * jp.pi * 2 * (phase - 0.2))
       drift = drift.at[1].set(nod)
+      if c.get("gait_head_stabilize", False):
+        # Head pitch in the world ~= torso pitch + nod, so subtract the torso's pitch;
+        # same for roll with the head-tilt joint (axis x, like the torso's roll).
+        pitch, roll = torso_tilt
+        drift = drift.at[1].add(-pitch)
+        drift = drift.at[2].add(-roll)
     return drift
 
-  def _motor_targets(self, leg_targets, t, tail_params, neck_params, phase) -> jax.Array:
+  def _motor_targets(self, leg_targets, t, tail_params, neck_params, phase,
+                     torso_tilt=(0.0, 0.0)) -> jax.Array:
     """RED PANDA: all 18 motor targets, in actuator (ctrl) order."""
     ctrl = self._init_ctrl
     ctrl = ctrl.at[self._leg_act].set(leg_targets)
     ctrl = ctrl.at[self._tail_act].set(self._tail_targets(t, tail_params, phase))
-    ctrl = ctrl.at[self._neck_act].set(self._neck_targets(t, neck_params, phase))
+    ctrl = ctrl.at[self._neck_act].set(
+        self._neck_targets(t, neck_params, phase, torso_tilt))
     return ctrl
+
+  def _torso_tilt(self, data):
+    """RED PANDA (run 6): torso pitch and roll from the gravity direction in the body
+    frame (what the real IMU gives). g_body = (sin p, -sin r cos p, -cos r cos p).
+    + pitch = nose down, + roll = right side down (rotation about the forward axis)."""
+    g = self.get_gravity(data)
+    pitch = jp.arcsin(jp.clip(g[0], -1.0, 1.0))
+    roll = jp.arctan2(-g[1], -g[2])
+    return pitch, roll
+
+  def _lean_target(self, phase, command):
+    """RED PANDA (run 6): target (pitch, roll) for the torso at this point in the stride.
+    Only the left feet are down around phase 0.45 -> lean left (left side down, roll < 0);
+    only the right feet around 0.95 -> lean right. Standing still -> no sway."""
+    g = self._gait
+    sway = jp.sin(2 * jp.pi * (phase - 0.2))  # +1 at 0.45 (left pair down), -1 at 0.95
+    walking = jp.linalg.norm(command) >= 0.01
+    roll = -jp.deg2rad(g.get("roll_amp_deg", 0.0)) * sway * walking
+    pitch = jp.deg2rad(g.get("pitch_deg", 0.0))
+    return pitch, roll
 
   def _desired_contact(self, phase, command) -> jax.Array:
     """RED PANDA (run 5): which feet should be down now, from the footfall chart.
@@ -499,6 +548,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
         state.info["tail_params"],
         state.info["neck_params"],
         state.info["gait_phase"],
+        self._torso_tilt(state.data),  # run 6: for head stabilization
     )
     data = mjx_env.step(
         self.mjx_model, state.data, motor_targets, self.n_substeps
@@ -658,7 +708,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
         ),
         "lin_vel_z": self._cost_lin_vel_z(self.get_global_linvel(data)),
         "ang_vel_xy": self._cost_ang_vel_xy(self.get_global_angvel(data)),
-        "orientation": self._cost_orientation(self.get_upvector(data)),
+        "orientation": self._cost_orientation_target(data, info),
         "stand_still": self._cost_stand_still(info["command"], leg_q),
         "termination": self._cost_termination(done),
         "pose": self._reward_pose(leg_q),
@@ -678,6 +728,10 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "dof_pos_limits": self._cost_joint_pos_limits(leg_q),
     }
     if self._gait_on:  # RED PANDA (run 5): the walk spec
+      pitch, roll = self._torso_tilt(data)
+      pitch_t, roll_t = self._lean_target(info["gait_phase"], info["command"])
+      err2 = jp.square(pitch - pitch_t) + jp.square(roll - roll_t)
+      terms["body_sway"] = jp.exp(-err2 / self._config.reward_config.get("body_sway_sigma", 1.0))
       desired = self._desired_contact(info["gait_phase"], info["command"])
       terms["gait_schedule"] = jp.mean(desired == contact)
       terms["base_height"] = jp.square(data.qpos[2] - self._gait.base_height)
@@ -701,6 +755,16 @@ class RedPandaWalk(mjx_env.MjxEnv):
 
   def _cost_ang_vel_xy(self, global_angvel):
     return jp.sum(jp.square(global_angvel[:2]))
+
+  def _cost_orientation_target(self, data, info):
+    """RED PANDA (run 6): Go1's orientation cost, but around the lean target instead of
+    perfectly flat. With zero targets it equals Go1's exactly: |g_body xy|^2 = sin^2(tilt)."""
+    g = self.get_gravity(data)
+    if not self._gait_on:
+      return jp.sum(jp.square(g[:2]))
+    pitch_t, roll_t = self._lean_target(info["gait_phase"], info["command"])
+    g_t = jp.array([jp.sin(pitch_t), -jp.sin(roll_t) * jp.cos(pitch_t)])
+    return jp.sum(jp.square(g[:2] - g_t))
 
   def _cost_orientation(self, torso_zaxis):
     return jp.sum(jp.square(torso_zaxis[:2]))

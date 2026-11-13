@@ -254,4 +254,34 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Head: drop the nod + stabilize against torso pitch; torso choreography (target roll/yaw/pitch that follows the stride clock); "head end carried low" body pitch; tail droop needs a pitch joint at the tip (doesn't exist).
   - Realism still missing: servo model (BAM), delay, domain randomization, pushes.
   - Cost: runs 2-5 about $0.57 (4 pods x ~9 min); today total ~$2.76. One stopped pod + the 20 GB volume remain.
-- **Next:** Run 6: head stabilization (no nod) + torso choreography, maybe hind-foot lift. Then start on realism.
+- **Next:** ~~Run 6: head stabilization + torso choreography~~ (done, see below).
+
+### Run 6: steady head, waddling body
+- **Did:** Run 6 = run 5 + head stabilization (no scripted nod) + torso choreography (lean toward the supporting feet, head end low) + tail counterbalancing the lean. Restarted the run 5 pod (its GPU was free this time): 6.5 min, ~$0.13. The viewer now keeps its scripted commands inside each run's trained range.
+- **Results** (walking forward at 0.2 m/s, measured in sim on the Mac):
+
+  | | Run 5 | **Run 6** |
+  |---|---|---|
+  | Head tilt swing in the world | 16.0 deg | **2.4 deg** |
+  | Head bob | 3.3 cm | **1.0 cm** |
+  | Torso lean (target +/-3 deg) | no target (2.1 deg swing) | **+/-3.1 deg, correlation 0.99 with the target** |
+  | Torso pitch (target 3 deg nose-down) | 0.1 deg | **3.0 deg** |
+  | Front / hind duty (spec 0.70) | 0.68 / 0.75 | 0.57 / 0.75 |
+  | Hind foot lift | 0.8-1.7 cm | **0.6-0.7 cm** (worse) |
+  | Speed test | ok | ok (0.20 -> 0.19, turn -0.50 -> -0.48), never fell |
+
+  Footfall order is still LH -> LF -> RH -> RF.
+- **Learned:**
+  - The head shake was mine, not randomness: a scripted nod plus a springy placeholder neck servo plus torso pitch. Head stabilization = neck angle = (where the head should point) - (torso tilt), with torso tilt from the gravity direction in the body frame, exactly what the real IMU gives: g_body = (sin p, -sin r cos p, -cos r cos p).
+  - Torso choreography = Go1's orientation cost around a target instead of flat (identical to Go1's when the target is 0), plus a `body_sway` exp reward. Lean target: roll toward the side whose feet are down (left pair around phase 0.45, right pair around 0.95), 3 deg.
+  - A rigid torso can't twist (yaw) each stride without actually turning: +/-2 deg would read as +/-0.27 rad/s of turning and fight turn tracking. Twist needs the side-bend spine.
+  - Sign conventions checked in sim before training: + pitch = nose down, + roll = right side down; tilting the torso 10 deg nose-down makes the neck target 8 - 10 = -2 deg.
+  - Rewards trade off: leaning cost some footfall timing (front feet down 57% instead of 70%).
+- **Mistakes fixed:** flipped the roll sign in my scratch check script (it already matched the env's convention); fixed a broken f-string in the same script.
+- **Decisions and why:** lean 3 deg toward the support side (weight shift = the waddle), head end 3 deg low, body_sway weight 0.5 with sigma (2 deg)^2, head held 8 deg down in the world, tail sign flipped to counter the new lean.
+- **Red panda notes (decide later):**
+  - Hind feet skim the floor (0.6-0.7 cm lift): give them their own clearance target or weight. Biggest remaining problem.
+  - Front duty drifted to 0.57: maybe raise gait_schedule 1.0 -> ~1.5.
+  - The neck servo overshoot comes from placeholder gains (kp 10); BAM will replace them.
+  - Cost so far: ~$2.89 total (session 1 $2.19 + runs 2-6 ~$0.70). Stopped pods: `hf9abldp5ohuh8` (run 4, GPU taken, can delete) and `hxbmsgtzxtmq8u` (runs 5-6), plus the 20 GB volume.
+- **Next:** Hind-foot lift fix, then realism: servo model (BAM), action delay, domain randomization (mass +/-10%, friction), pushes.

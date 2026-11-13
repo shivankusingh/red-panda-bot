@@ -29,11 +29,11 @@ import red_panda_walk  # noqa: E402
 
 # Joystick script: (seconds, forward m/s, sideways m/s, turn rad/s, label)
 SCRIPT = [
-    (4.0, 0.30, 0.0, 0.0, "forward 0.3"),
+    (4.0, 0.30, 0.0, 0.0, "forward"),
     (3.0, 0.20, 0.0, 0.4, "curve left"),
     (2.0, 0.00, 0.0, 0.0, "stop"),
-    (3.0, -0.20, 0.0, 0.0, "backward 0.2"),
-    (3.0, 0.00, 0.15, 0.0, "sideways 0.15"),
+    (3.0, -0.20, 0.0, 0.0, "backward"),
+    (3.0, 0.00, 0.15, 0.0, "sideways"),
     (3.0, 0.00, 0.0, -0.5, "turn in place right"),
 ]
 
@@ -69,6 +69,12 @@ state = reset(jax.random.PRNGKey(args.seed))
 key = jax.random.PRNGKey(1)
 qpos_log, rows = [], []
 gait_log = []  # (phase or step, contacts) during the first segment (forward)
+# Keep the script inside this run's trained command range (e.g. run 5+ walks at <= 0.2 m/s).
+cmd_max = np.array(env_cfg.command_config.a)
+script_max = np.abs(np.array([[vx, vy, wz] for _, vx, vy, wz, _ in SCRIPT])).max(axis=0)
+shrink = np.minimum(1.0, cmd_max / script_max)
+SCRIPT = [(sec, vx * shrink[0], vy * shrink[1], wz * shrink[2], label)
+          for sec, vx, vy, wz, label in SCRIPT]
 for seconds, vx, vy, wz, label in SCRIPT:
   cmd = jp.array([vx, vy, wz])
   speeds, fell = [], False
