@@ -346,3 +346,61 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Mistakes fixed:** stopped the pod before config.json finished copying back. Rebuilt it from run 7's config + the one change and checked it against the code (only `impl` differs: warp on the GPU, jax on the Mac).
 - **Cost so far:** ~$3.17 total. One stopped pod (`9hgcar5rn7v23f`) plus the 20 GB volume.
 - **Next:** realism: domain randomization (mass +/-10%, friction), pushes, action delay; BAM servo model once the servo rig exists.
+
+### Realism stress test (run 8's policy)
+- **Did:** Before adding randomization, threw one real-world difference at a time at run 8's policy in sim on the Mac: 16 robots per condition walking 0.2 m/s for 10 s.
+- **Results:**
+
+  | Condition | Fell | Speed (target 0.20) |
+  |---|---|---|
+  | Baseline | 0/16 | 0.19 |
+  | Friction 0.5 / 0.3 / 0.2 / 0.1 (floor and feet) | 0/16 each | 0.18-0.19 |
+  | Mass x0.9 / x1.1 / x1.2 | 0/16 each | 0.19 |
+  | Center of mass shifted 2 cm (any direction) or 5 cm forward | 0/16 each | 0.18-0.20 |
+  | Servo stiffness x1.3 / x0.7 / x0.5 | 0/16 each | 0.19 / 0.16 / 0.12 |
+  | Motor delay 20 ms / 40 ms | 0/16, **15/16** | 0.11 / 0.00 |
+  | Pushes 0.1 / 0.2 / 0.3 / 0.4 m/s | 0, 1, 5, **16** of 16 | 0.16-0.19 |
+
+- **Learned:**
+  - Delay is the biggest threat by far: each balance correction arrives after the body has moved on, so it overcorrects and the wobble grows (torso roll swing 6 deg at 0 ms, 10-15 deg at 20 ms, 25 -> 35 deg -> fall at 40 ms). Like adjusting a shower that takes seconds to respond.
+  - MuJoCo uses the HIGHER of the two friction values in a contact. Our feet are 1.0, so Go1's randomizer (floor only) would silently do nothing. Randomize the feet too.
+  - Go1's biggest push (velocity_kick 3.0) changes our robot's speed by 0.41 m/s (checked in sim, = M_torso x kick / (pi x M_total)): twice our top walking speed.
+  - 1 fall in 16 can be noise: a condition with physics identical to the baseline had one.
+  - **Torque check:** run 8's knee swung at 6.1 rad/s, faster than the STS3215 can turn even with no load (4.7 rad/s). The sim's servos gave full stall torque at any speed; a real one gives less the faster it turns. The walk spec gives each foot 0.24 s in the air, and folding the front knee ~36 deg and back in that time needs ~5 rad/s.
+
+### Run 9: real servo speed limit
+- **Did:** Added a servo torque-speed limit (`servo_config`): each physics substep, the servo's twist is capped at stall x (1 - speed / 4.7 rad/s) in the direction it's already turning (braking allowed up to stall). Done by computing the position actuator's torque ourselves and handing MuJoCo the target that gives exactly the capped torque. Also built a motor delay (0-40 ms, in 4 ms substeps) in the same loop, off for now. Configs from runs 1-8 have no servo_config, so they replay unchanged. New pod (`oc5icdqjmzdrwh`, the run 8 pod's GPU was taken): 7.3 min of training, ~$0.16.
+- **Checks before training:** smoke test passes; 0 of 27,000 actuator samples above the curve (using the speed the servo saw); delay reproduces the stress test (20 ms -> 0.13 m/s, 40 ms -> 15/16 fall); run 8's policy still walks with the limit (knee 6.1 -> 3.9 rad/s).
+- **Results** (walking forward at 0.2 m/s, measured in sim on the Mac):
+
+  | | Run 8 | **Run 9** |
+  |---|---|---|
+  | Duty LF / RF / LH / RH (spec 0.70) | 0.69 / 0.62 / 0.75 / 0.68 | **0.67 / 0.68 / 0.71 / 0.71** |
+  | Foot lift LF / RF / LH / RH | 3.9 / 3.9 / 3.4 / 3.6 cm | 3.8 / 3.6 / 3.4 / 3.8 cm |
+  | Head tilt / bob | 2.7 deg / 1.7 cm | 2.2 deg / 1.3 cm |
+  | Lean / pitch | +/-3.3 deg (corr 0.99) / 2.8 deg | +/-3.4 deg (corr 0.99) / 3.0 deg |
+  | Front knee / hip swing | 35.8 / 28.2 deg | **26.8 / 33.3 deg** |
+  | Speed test | ok | ok, never fell |
+
+  ```
+  LH █████████████······█
+  LF ····██████████████··
+  RH ███······███████████
+  RF ████████······██████   on spec
+  ```
+- **Torques at 1.8 kg** (rule: average below rated 0.98, peaks below 60-70% of stall = 1.76-2.06 N*m):
+
+  | Joint | Average | Peak (99th pct) | Top speed |
+  |---|---|---|---|
+  | hip_side | 0.42 (43%) | 1.77 (edge) | 3.2 rad/s |
+  | hip | 0.61 (62%) | **2.33 (fail)** | 4.0 rad/s |
+  | knee | 0.76 (78%, run 8: 88%) | **2.74 (fail)** | 3.9 rad/s (run 8: 6.1) |
+
+  At 1.98 kg: almost identical.
+- **Learned:**
+  - A servo's push (torque) comes from current, and a spinning motor makes its own voltage that fights the battery, so the faster it turns, the less it can twist. Twisting hard and turning fast are different things (stuck jar lid vs. loose lid).
+  - With the real limit, the policy steps more from the hip and folds the knee less, and the feet still lift the same. The walk the real servos can do came out tidier than the one they can't.
+- **Mistakes fixed:** my first "over the curve" check compared torque with the speed after the physics step; checking with the speed the servo actually saw gave exactly 0. Stopped run 8's pod before config.json copied (logged in run 8); this time the pod was stopped only after all 3 files arrived.
+- **Red panda notes (decide later):** hip and knee peaks still fail the torque rule. The servo stiffness is still a placeholder (kp 10), so the BAM model will move these numbers.
+- **Cost so far:** ~$3.33 total. Stopped pods: `oc5icdqjmzdrwh` (run 9) and `9hgcar5rn7v23f` (run 8, GPU taken), plus the 20 GB volume.
+- **Next:** run 10, randomization (motor delay, pushes, servo stiffness, mass, friction on floor and feet, center of mass).

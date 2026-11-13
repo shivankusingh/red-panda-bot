@@ -195,6 +195,17 @@ def default_config() -> config_dict.ConfigDict:
           kick_durations=[0.05, 0.2],
           kick_wait_times=[1.0, 3.0],
       ),
+      # RED PANDA (run 9): servo model, step 1. A real servo twists less hard the
+      # faster it turns (its spinning motor makes a voltage that fights the battery).
+      # Straight line: full stall torque (the actuator forcerange, 2.9 N*m) at 0 rad/s,
+      # zero at the no-load speed (STS3215 C018 at 12 V: 4.7 rad/s). Braking (twisting
+      # against the motion) is allowed up to stall. BAM replaces this with the measured
+      # curve. Configs saved before run 9 have no servo_config, so old runs replay as-is.
+      servo_config=config_dict.create(
+          torque_speed_limit=True,
+          no_load_speed=4.7,    # rad/s at the output horn
+          delay_ms=[0.0, 0.0],  # run 10: random motor delay per episode (0 = off)
+      ),
       command_config=config_dict.create(
           # Uniform distribution for command amplitude.
           # RED PANDA: forward / sideways / turn max (Go1: 1.5, 0.8, 1.2).
@@ -258,6 +269,15 @@ class RedPandaWalk(mjx_env.MjxEnv):
     self._neck_act = act_ids(NECK_JOINTS)
 
     self._default_pose = jp.array(home.qpos[self._leg_qpos])  # legs only
+
+    # RED PANDA (run 9): servo model. Each actuator's joint angle/speed, in ctrl order.
+    act_joint = m.actuator_trnid[:, 0]
+    self._act_qpos = jp.array(m.jnt_qposadr[act_joint])
+    self._act_qvel = jp.array(m.jnt_dofadr[act_joint])
+    self._stall = jp.array(m.actuator_forcerange[:, 1])
+    self._servo = self._config.get("servo_config", None)
+    self._servo_on = self._servo is not None and (
+        self._servo.torque_speed_limit or max(self._servo.delay_ms) > 0)
 
     # Soft limits (legs only). Go1 quirk kept for pass 1: x0.95 shrinks
     # toward zero, so our knees (ranges ending at 0) get no warning zone.
@@ -531,6 +551,15 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "gait_phase": gait_phase,  # RED PANDA (run 5): 0..1 through the stride
         "last_leg_qvel": jp.zeros(len(LEG_JOINTS)),  # RED PANDA (run 5): for joint_acc
     }
+    if self._servo_on:  # RED PANDA (run 9)
+      # Motor delay for this episode, in physics substeps (sim_dt each).
+      rng, key = jax.random.split(rng)
+      lo, hi = (jp.array(self._servo.delay_ms) / 1000.0 / self._config.sim_dt)
+      n = self.n_substeps
+      info["delay_substeps"] = jp.clip(jp.round(
+          jax.random.uniform(key, minval=lo, maxval=hi)), 0, 2 * n).astype(jp.int32)
+      info["last_motor_targets"] = jp.stack([data.ctrl, data.ctrl])  # 1 and 2 steps ago
+      info["rng"] = rng
 
     metrics = {}
     for k in self._config.reward_config.scales.keys():
@@ -559,9 +588,14 @@ class RedPandaWalk(mjx_env.MjxEnv):
         state.info["gait_phase"],
         self._torso_tilt(state.data),  # run 6: for head stabilization
     )
-    data = mjx_env.step(
-        self.mjx_model, state.data, motor_targets, self.n_substeps
-    )
+    if self._servo_on:  # RED PANDA (run 9)
+      data = self._servo_substeps(state.data, motor_targets, state.info)
+      state.info["last_motor_targets"] = jp.stack(
+          [motor_targets, state.info["last_motor_targets"][0]])
+    else:
+      data = mjx_env.step(
+          self.mjx_model, state.data, motor_targets, self.n_substeps
+      )
 
     contact = jp.array([
         data.sensordata[self._mj_model.sensor_adr[sensorid]] > 0
@@ -610,6 +644,35 @@ class RedPandaWalk(mjx_env.MjxEnv):
     done = done.astype(reward.dtype)
     state = state.replace(data=data, obs=obs, reward=reward, done=done)
     return state
+
+  def _servo_substeps(self, data, motor_targets, info):
+    """RED PANDA (run 9): physics substeps with the servo torque-speed limit (+ delay).
+
+    MuJoCo's position actuator twists with kp * (target - angle), clipped to +/-stall.
+    Each substep we work out that torque ourselves, clip it to what the servo can give
+    at its current speed, then hand MuJoCo the target that produces exactly that torque.
+    """
+    model = self.mjx_model
+    kp = model.actuator_gainprm[:, 0]  # read from the model so randomized gains count
+    n = self.n_substeps
+    prev, prev2 = info["last_motor_targets"]
+
+    def substep(data, i):
+      # Motor delay: substep i runs the targets sent delay_substeps substeps ago.
+      back = i - info["delay_substeps"]
+      target = jp.where(back >= 0, motor_targets, jp.where(back >= -n, prev, prev2))
+      if self._servo.torque_speed_limit:
+        q = data.qpos[self._act_qpos]
+        w = data.qvel[self._act_qvel]
+        tau = kp * (target - q)
+        # Twisting the way it's already turning: less available the faster it turns.
+        # Twisting against the motion (braking): up to stall.
+        tau_max = self._stall * jp.clip(1.0 - w / self._servo.no_load_speed, 0.0, 1.0)
+        tau_min = -self._stall * jp.clip(1.0 + w / self._servo.no_load_speed, 0.0, 1.0)
+        target = q + jp.clip(tau, tau_min, tau_max) / kp
+      return mjx.step(model, data.replace(ctrl=target)), None
+
+    return jax.lax.scan(substep, data, jp.arange(n))[0]
 
   def _get_termination(self, data: mjx.Data) -> jax.Array:
     fall_termination = self.get_upvector(data)[-1] < 0.0
