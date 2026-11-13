@@ -71,4 +71,5 @@ cfg = rpw.default_config()
 cfg.policy_sees_body_speed = True
 env2 = rpw.RedPandaWalk(config=cfg)
 print(f"policy_sees_body_speed=True -> policy inputs: "
-      f"{env2.reset(jax.random.PRNGKey(0)).obs['state'].shape[0]} (want 60)")
+      f"{env2.reset(jax.random.PRNGKey(0)).obs['state'].shape[0]} "
+      f"(want {state.obs['state'].shape[0] + 3}: body speed adds 3)")

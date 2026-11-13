@@ -19,6 +19,7 @@ import jax.numpy as jp
 import mujoco
 import numpy as np
 from brax.training.acme import running_statistics
+from ml_collections import config_dict
 from brax.training.agents.ppo import networks as ppo_networks
 from PIL import Image
 
@@ -44,9 +45,8 @@ run = REPO / "runs" / args.run
 cfg = json.load(open(run / "config.json"))
 
 # Same env as training, but on the CPU.
-env_cfg = red_panda_walk.default_config()
+env_cfg = config_dict.ConfigDict(cfg["env"])  # the settings this run trained with
 env_cfg.impl = "jax"
-env_cfg.policy_sees_body_speed = cfg["args"].get("sees_speed", False)
 env = red_panda_walk.RedPandaWalk(config=env_cfg)
 
 # Rebuild the network shape, then load the trained weights into it.
@@ -68,6 +68,7 @@ reset, step = jax.jit(env.reset), jax.jit(env.step)
 state = reset(jax.random.PRNGKey(args.seed))
 key = jax.random.PRNGKey(1)
 qpos_log, rows = [], []
+gait_log = []  # (phase or step, contacts) during the first segment (forward)
 for seconds, vx, vy, wz, label in SCRIPT:
   cmd = jp.array([vx, vy, wz])
   speeds, fell = [], False
@@ -82,6 +83,9 @@ for seconds, vx, vy, wz, label in SCRIPT:
     gyro = np.array(env.get_gyro(state.data))
     speeds.append([lin[0], lin[1], gyro[2]])
     fell |= bool(state.done)
+    if label == SCRIPT[0][4]:
+      gait_log.append((float(state.info["gait_phase"]),
+                       np.array(state.info["last_contact"])))
   s = np.array(speeds[len(speeds) // 3:])  # skip the first third (speeding up)
   rows.append((label, (vx, vy, wz), s.mean(axis=0), fell))
 
@@ -89,6 +93,23 @@ print(f"\n{'segment':22s} {'commanded (fwd, side, turn)':30s} {'measured':30s} f
 for label, c, m, fell in rows:
   print(f"{label:22s} ({c[0]:+.2f}, {c[1]:+.2f}, {c[2]:+.2f})          "
         f"({m[0]:+.2f}, {m[1]:+.2f}, {m[2]:+.2f})          {'YES' if fell else 'no'}")
+
+# Footfall chart while walking forward (skip the first second: speeding up).
+# Feet in the spec's order: LH, LF, RH, RF  (FEET order is fl, fr, bl, br).
+order = [("LH", 2), ("LF", 0), ("RH", 3), ("RF", 1)]
+log = gait_log[50:]
+if env._gait_on:  # fold by the stride clock into 20 bins of 5%
+  print("\nfootfall chart, folded by the stride clock (█ = down most of that 5%):")
+  bins = [[] for _ in range(20)]
+  for phase, c in log:
+    bins[min(int(phase * 20), 19)].append(c)
+  for name, i in order:
+    row = "".join("█" if np.mean([c[i] for c in b]) > 0.5 else "·" for b in bins)
+    print(f"  {name}  {row}")
+else:  # no clock: show 1 second of raw timeline (1 char = 0.04 s)
+  print("\nfootfall timeline, 1 s (1 char = 0.04 s):")
+  for name, i in order:
+    print(f"  {name}  " + "".join("█" if log[k][1][i] else "·" for k in range(0, 50, 2)))
 
 # Render: a copy of the model with a checkered floor (looks only, same physics).
 spec = mujoco.MjSpec.from_file(str(red_panda_walk.XML_PATH))

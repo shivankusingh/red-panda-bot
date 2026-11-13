@@ -27,7 +27,8 @@ This project rebuilds known methods; the tail is the new part.
 - Lee et al., "Learning quadrupedal locomotion over challenging terrain" (Science Robotics, 2020)
 - Kumar et al., "RMA: Rapid Motor Adaptation for Legged Robots" (2021)
 - Lee et al., "Robust Recovery Controller for a Quadrupedal Robot using Deep Reinforcement Learning" (2019)
-- Margolis & Agrawal, "Walk These Ways" (2022)
+- Margolis & Agrawal, "Walk These Ways" (2022); the footfall-schedule idea behind the red panda walk
+- Plocek & Dunham, red panda walking kinematics at Cleveland Metroparks Zoo (2023, Case Western Reserve University); evidence that red pandas use a lateral-sequence walk
 - Grandia et al., "Design and Control of a Bipedal Robotic Character" (Disney Research, 2024)
 - Libby et al., "Tail-assisted pitch control in lizards, robots and dinosaurs" (Nature, 2012)
 - Stanford Pupper (leg geometry)

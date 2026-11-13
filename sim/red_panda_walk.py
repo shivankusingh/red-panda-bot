@@ -63,13 +63,18 @@ def default_config() -> config_dict.ConfigDict:
       # RED PANDA: the tail is animated while walking (not the policy), with
       # random sway each episode so the policy learns to balance against it.
       tail_config=config_dict.create(
-          wag_amp_deg=[0.0, 30.0],     # side-to-side size
+          # Run 2: calmer tail (run 1 used 0-30 for both; the tip whipped +/-31 deg).
+          wag_amp_deg=[0.0, 15.0],     # side-to-side size
           wag_freq_hz=[0.3, 1.5],      # sways per second
           lift_center_deg=[-10.0, 40.0],
           lift_amp_deg=[0.0, 15.0],
           lift_min_deg=-25.0,          # below ~-40 deg the tail hits the floor
-          wag2_amp_deg=[0.0, 30.0],    # second joint, lags behind (follow-through)
+          wag2_amp_deg=[0.0, 10.0],    # second joint, lags behind (follow-through)
           wag2_lag_rad=[0.3, 1.5],
+          # Run 5 (gait clock on): one sway per stride, opposite the body's roll
+          # (counterbalance), tail held about level. Size randomized for robustness.
+          gait_wag_amp_deg=[4.0, 10.0],
+          gait_lift_deg=[-8.0, 2.0],
       ),
       # RED PANDA: the head "looks around" while walking (animation, not the
       # policy): each neck joint drifts slowly on its own random rhythm.
@@ -78,6 +83,23 @@ def default_config() -> config_dict.ConfigDict:
           enable=True,
           amp_deg=[30.0, 20.0, 15.0],  # max swing: turn, nod, tilt
           freq_hz=[0.1, 0.5],          # slow: one look every 2-10 s
+          # Run 5 (gait clock on): head low and forward, mostly steady, with a slight
+          # nod each time a front foot lands; small random turn/tilt drift.
+          gait_nod_base_deg=8.0,       # + = head down
+          gait_nod_amp_deg=3.0,
+          gait_turn_tilt_amp_deg=[10.0, 5.0],
+      ),
+      # RED PANDA (run 5): the user's red panda walk spec. A clock ticks through each
+      # stride; each foot should be down for `duty` of the cycle, starting at its
+      # touchdown offset. Lateral-sequence walk with lateral couplets: LH -> LF -> RH -> RF.
+      gait_config=config_dict.create(
+          enable=True,
+          freq_hz=1.25,                    # strides per second (spec: 1.0-1.6, never 3-4)
+          duty=0.70,                       # each foot down 70% of the cycle
+          # touchdown offsets in FEET order (fl, fr, bl, br) = (LF, RF, LH, RH);
+          # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70
+          offsets=[0.20, 0.70, 0.00, 0.50],
+          base_height=0.19,                # torso target: the home stance (no tall spider legs)
       ),
       reward_config=config_dict.create(
           scales=config_dict.create(
@@ -108,7 +130,15 @@ def default_config() -> config_dict.ConfigDict:
               feet_clearance=-2.0,
               feet_height=-0.2,
               feet_slip=-0.1,
-              feet_air_time=0.1,
+              # RED PANDA (run 4): Go1 0.1. At 0.1 this term was ~0.1% of the total
+              # (-1 per episode vs. pose +480), too small to change the gait. 2.0 makes
+              # it about the size of torques now that pose no longer fights long steps.
+              feet_air_time=0.0,  # run 5: off. The gait clock sets step timing now
+              # (spec swing time 0.3/1.25 = 0.24 s would be fined by the 0.25 s threshold).
+              # RED PANDA (run 5): the walk spec.
+              gait_schedule=1.0,   # fraction of feet matching the footfall chart (0-1), per step
+              base_height=-20.0,   # (torso height - target)^2: no rising up on straight legs
+              joint_acc=-2.5e-7,   # sum of leg joint acceleration^2: anti-jitter (legged_gym's value)
           ),
           # RED PANDA: two sigmas instead of Go1's one (0.25). Our walk speeds are
           # 4x slower than Go1's (error^2 16x smaller) -> 0.25/16; turn speeds are
@@ -118,7 +148,18 @@ def default_config() -> config_dict.ConfigDict:
           # RED PANDA: foot-center height target mid-step (Go1: 0.1). 4.0 cm =
           # 3 cm of lift + 0.97 cm foot radius: a low, long red panda step that's
           # quick for slow servos. (Go1-proportional would be 4.7: 84% of max lift.)
-          max_foot_height=0.04,
+          # Run 5: spec says lift ~15-20% of leg length (24 cm) = 3.6-4.8 cm -> 3.6 cm
+          # lift + 0.97 cm foot radius. (Runs 1-4 used 0.04.)
+          max_foot_height=0.046,
+          # RED PANDA (run 2): Go1 rewards air time above 0.1 s per step. Run 1's quick
+          # steps (~0.19 s in the air) already beat that, so nothing pushed for longer
+          # steps. 0.25 s makes quick little steps cost and longer swings pay.
+          air_time_threshold=0.25,
+          # RED PANDA (run 3): pose's per-joint weights (hip_side, hip, knee). Go1 uses
+          # 1.0, 1.0, 0.1. A +/-25 deg hip swing cost ~135 pose points per episode, so
+          # the policy kept steps short. Hip 0.2 makes long steps cheap; hip_side stays
+          # 1.0 so the legs don't splay sideways.
+          pose_weights=[1.0, 0.2, 0.1],
       ),
       pert_config=config_dict.create(
           enable=False,
@@ -133,7 +174,10 @@ def default_config() -> config_dict.ConfigDict:
           # Go1's sideways/forward ratio (53%). Turn 0.5 rad/s: Go1's turn as a
           # fraction of its fastest possible turn (18%), scaled to our feet being
           # 0.14 m from the center. Measure the real top speeds after the first run.
-          a=[0.4, 0.2, 0.5],
+          # Run 5: speed = stride x strides/s. At 1.25 strides/s a moderate ~16 cm
+          # stride gives 0.2 m/s (0.4 would need 32 cm; the legs max out ~20 cm).
+          # Sideways 0.1: sidestepping doesn't suit a lateral-sequence walk. (Runs 1-4: 0.4, 0.2, 0.5.)
+          a=[0.2, 0.1, 0.5],
           # Probability of not zeroing out new command.
           b=[0.9, 0.25, 0.5],
       ),
@@ -220,6 +264,12 @@ class RedPandaWalk(mjx_env.MjxEnv):
     self._cmd_a = jp.array(self._config.command_config.a)
     self._cmd_b = jp.array(self._config.command_config.b)
 
+    # RED PANDA (run 5): gait clock. Old runs' configs have no gait_config -> off.
+    self._gait = self._config.get("gait_config", None)
+    self._gait_on = bool(self._gait is not None and self._gait.enable)
+    if self._gait_on:
+      self._gait_offsets = jp.array(self._gait.offsets)
+
   # Sensor readings (from Go1's base.py).
 
   def get_upvector(self, data):
@@ -260,10 +310,22 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "lift_amp": jp.deg2rad(u(keys[4], c.lift_amp_deg)),
         "wag2_amp": jp.deg2rad(u(keys[5], c.wag2_amp_deg)),
         "wag2_lag": u(keys[6], c.wag2_lag_rad),
+        # used only when the gait clock is on
+        "gait_wag_amp": jp.deg2rad(u(keys[7], c.get("gait_wag_amp_deg", [0.0, 0.0]))),
+        "gait_lift": jp.deg2rad(u(keys[3], c.get("gait_lift_deg", [0.0, 0.0]))),
     }
 
-  def _tail_targets(self, t: jax.Array, p: Dict[str, jax.Array]) -> jax.Array:
+  def _tail_targets(self, t, p, phase) -> jax.Array:
     """Tail motor targets at time t: wag, lift, wag2 (radians)."""
+    if self._gait_on:
+      # One sway per stride, opposite the body's roll. Only the left feet are down
+      # around phase 0.45 (body rolls right -> tail left, wag < 0); only the right
+      # feet around 0.95 (tail right, wag > 0). + wag = tail toward the robot's right.
+      angle = 2 * jp.pi * (phase - 0.2)
+      wag = -p["gait_wag_amp"] * jp.sin(angle)
+      wag2 = -p["wag2_amp"] * jp.sin(angle - p["wag2_lag"])  # follow-through
+      targets = jp.array([wag, p["gait_lift"], wag2])
+      return jp.clip(targets, self._tail_lowers, self._tail_uppers)
     angle = 2 * jp.pi * p["freq"] * t + p["phase"]
     wag = p["wag_amp"] * jp.sin(angle)
     # Lift bobs twice per wag (once per side), like a swinging tail.
@@ -286,17 +348,36 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "phase": jax.random.uniform(k3, (3,), minval=0.0, maxval=2 * jp.pi),
     }
 
-  def _neck_targets(self, t: jax.Array, p: Dict[str, jax.Array]) -> jax.Array:
+  def _neck_targets(self, t, p, phase) -> jax.Array:
     """Neck motor targets at time t: turn, nod, tilt (radians)."""
-    return p["amp"] * jp.sin(2 * jp.pi * p["freq"] * t + p["phase"])
+    drift = p["amp"] * jp.sin(2 * jp.pi * p["freq"] * t + p["phase"])
+    if self._gait_on:
+      c = self._config.neck_config
+      turn_max, tilt_max = c.gait_turn_tilt_amp_deg
+      scale = jp.deg2rad(jp.array([turn_max, 0.0, tilt_max])) / jp.maximum(
+          jp.deg2rad(jp.array(c.amp_deg)), 1e-6)
+      drift = drift * scale  # small turn/tilt drift, no random nod
+      # Front feet land at phase 0.2 (LF) and 0.7 (RF): nod down (+) at each.
+      nod = jp.deg2rad(c.gait_nod_base_deg) + jp.deg2rad(c.gait_nod_amp_deg) * jp.cos(
+          2 * jp.pi * 2 * (phase - 0.2))
+      drift = drift.at[1].set(nod)
+    return drift
 
-  def _motor_targets(self, leg_targets, t, tail_params, neck_params) -> jax.Array:
+  def _motor_targets(self, leg_targets, t, tail_params, neck_params, phase) -> jax.Array:
     """RED PANDA: all 18 motor targets, in actuator (ctrl) order."""
     ctrl = self._init_ctrl
     ctrl = ctrl.at[self._leg_act].set(leg_targets)
-    ctrl = ctrl.at[self._tail_act].set(self._tail_targets(t, tail_params))
-    ctrl = ctrl.at[self._neck_act].set(self._neck_targets(t, neck_params))
+    ctrl = ctrl.at[self._tail_act].set(self._tail_targets(t, tail_params, phase))
+    ctrl = ctrl.at[self._neck_act].set(self._neck_targets(t, neck_params, phase))
     return ctrl
+
+  def _desired_contact(self, phase, command) -> jax.Array:
+    """RED PANDA (run 5): which feet should be down now, from the footfall chart.
+    A foot is down from its touchdown offset until `duty` later (wrapping around).
+    Joystick centered -> all four down (stand still)."""
+    in_stance = jp.mod(phase - self._gait_offsets, 1.0) < self._gait.duty
+    standing = jp.linalg.norm(command) < 0.01
+    return jp.where(standing, True, in_stance)
 
   def reset(self, rng: jax.Array) -> mjx_env.State:
     qpos = self._init_q
@@ -323,12 +404,15 @@ class RedPandaWalk(mjx_env.MjxEnv):
     tail_params = self._sample_tail_params(key)
     rng, key = jax.random.split(rng)
     neck_params = self._sample_neck_params(key)
+    rng, key = jax.random.split(rng)
+    gait_phase = jax.random.uniform(key)  # RED PANDA (run 5): start anywhere in the stride
 
     data = mjx_env.make_data(
         self.mj_model,
         qpos=qpos,
         qvel=qvel,
-        ctrl=self._motor_targets(self._default_pose, 0.0, tail_params, neck_params),
+        ctrl=self._motor_targets(self._default_pose, 0.0, tail_params, neck_params,
+                                 gait_phase),
         impl=self.mjx_model.impl.value,
         naconmax=self._config.naconmax,
         njmax=self._config.njmax,
@@ -386,6 +470,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "time": jp.zeros(()),        # RED PANDA: clock for the tail animation
         "tail_params": tail_params,  # RED PANDA
         "neck_params": neck_params,  # RED PANDA
+        "gait_phase": gait_phase,  # RED PANDA (run 5): 0..1 through the stride
+        "last_leg_qvel": jp.zeros(len(LEG_JOINTS)),  # RED PANDA (run 5): for joint_acc
     }
 
     metrics = {}
@@ -403,12 +489,16 @@ class RedPandaWalk(mjx_env.MjxEnv):
 
     # RED PANDA: 12 leg targets from the policy + 3 tail + 3 neck = 18.
     state.info["time"] += self.dt
+    if self._gait_on:  # RED PANDA (run 5): advance the stride clock
+      state.info["gait_phase"] = jp.mod(
+          state.info["gait_phase"] + self._gait.freq_hz * self.dt, 1.0)
     leg_targets = self._default_pose + action * self._config.action_scale
     motor_targets = self._motor_targets(
         leg_targets,
         state.info["time"],
         state.info["tail_params"],
         state.info["neck_params"],
+        state.info["gait_phase"],
     )
     data = mjx_env.step(
         self.mjx_model, state.data, motor_targets, self.n_substeps
@@ -436,6 +526,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
     }
     reward = jp.clip(sum(rewards.values()) * self.dt, 0.0, 10000.0)
 
+    state.info["last_leg_qvel"] = data.qvel[self._leg_qvel]
     state.info["last_last_act"] = state.info["last_act"]
     state.info["last_act"] = action
     state.info["steps_until_next_cmd"] -= 1
@@ -506,6 +597,9 @@ class RedPandaWalk(mjx_env.MjxEnv):
         self._noisy(info, neck_angles, scales.joint_pos),  # 3
         self._noisy(info, neck_vel, scales.joint_vel),  # 3
     ]
+    if self._gait_on:  # RED PANDA (run 5): the stride clock, as a point on a circle
+      angle = 2 * jp.pi * info["gait_phase"]
+      parts.append(jp.array([jp.sin(angle), jp.cos(angle)]))  # 2 -> 59 inputs
     state = jp.hstack(parts)
 
     accelerometer = self.get_accelerometer(data)
@@ -555,7 +649,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
     leg_q = data.qpos[self._leg_qpos]
     leg_qvel = data.qvel[self._leg_qvel]
     leg_force = data.actuator_force[self._leg_act]
-    return {
+    terms = {
         "tracking_lin_vel": self._reward_tracking_lin_vel(
             info["command"], self.get_local_linvel(data)
         ),
@@ -583,6 +677,14 @@ class RedPandaWalk(mjx_env.MjxEnv):
         ),
         "dof_pos_limits": self._cost_joint_pos_limits(leg_q),
     }
+    if self._gait_on:  # RED PANDA (run 5): the walk spec
+      desired = self._desired_contact(info["gait_phase"], info["command"])
+      terms["gait_schedule"] = jp.mean(desired == contact)
+      terms["base_height"] = jp.square(data.qpos[2] - self._gait.base_height)
+      terms["joint_acc"] = jp.sum(
+          jp.square((leg_qvel - info["last_leg_qvel"]) / self.dt))
+    # only terms this run's config has a weight for (old runs replay unchanged)
+    return {k: v for k, v in terms.items() if k in self._config.reward_config.scales}
 
   # Reward terms: unchanged from Go1.
 
@@ -614,7 +716,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
     return jp.sum(jp.square(act - last_act))
 
   def _reward_pose(self, qpos):
-    weight = jp.array([1.0, 1.0, 0.1] * 4)  # hip_side, hip, knee per leg
+    per_leg = self._config.reward_config.get("pose_weights", [1.0, 1.0, 0.1])  # Go1 = runs 1-2
+    weight = jp.array(list(per_leg) * 4)  # hip_side, hip, knee per leg
     return jp.exp(-jp.sum(jp.square(qpos - self._default_pose) * weight))
 
   def _cost_stand_still(self, commands, qpos):
@@ -652,7 +755,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
 
   def _reward_feet_air_time(self, air_time, first_contact, commands):
     cmd_norm = jp.linalg.norm(commands)
-    rew_air_time = jp.sum((air_time - 0.1) * first_contact)
+    threshold = self._config.reward_config.get("air_time_threshold", 0.1)  # 0.1 = Go1 (run 1)
+    rew_air_time = jp.sum((air_time - threshold) * first_contact)
     rew_air_time *= cmd_norm > 0.01  # No reward for zero commands.
     return rew_air_time
 

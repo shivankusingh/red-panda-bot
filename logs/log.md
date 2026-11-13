@@ -209,4 +209,49 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Measure the real top speed: command 0.1 → 0.5 m/s, see where tracking breaks.
   - Silence Go1's solver warning at the source (`warn_overflow`) and test it on the GPU; confirm the red panda run without the filter.
   - Commit a cleaned run-order script (the pod's `run_all.sh` / `run_b.sh` aren't in the repo).
-- **Next:** Watch the GIF and describe the gait. Then plan run 2: one change at a time (likely domain randomization + servo limits first).
+- **Next:** ~~Watch the GIF and plan run 2~~ (runs 2-5, see below).
+
+### Runs 2-5: from a robot trot to a red panda walk
+- **Did:** Four more ~7-minute GPU runs (one fresh RTX 4090 pod each: stopped pods couldn't restart because their GPUs got taken). Added a measured footfall chart to `tools/watch_policy.py`, made it rebuild each run's env from its own `config.json`, and kept old runs replayable (new settings fall back to the old values). Wrote my red panda walk spec and had it implemented as a stride clock + footfall-schedule reward (run 5).
+- **What I saw:** Run 1 walks perfectly by the numbers but looks like a spider/robot: quick tiny steps (2.6 per second, 11 cm stride, 2 cm lift), using a third of the leg range, and the tail tip whipped +/-31 deg.
+- **Results** (forward walking; gait measured in sim on the Mac):
+
+  | Run | Change (cumulative) | Steps/s | Stride | Hip swing (front/hind) | Footfall |
+  |---|---|---|---|---|---|
+  | 1 | Go1 rewards + size fixes | 2.6 | 11.4 cm | 19 / 19 deg | trot (diagonal pairs) |
+  | 2 | A: calmer tail (wag 0-15, tip 0-10 deg) + B: air-time threshold 0.1 -> 0.25 s | 2.6 | 11.4 cm | 17 / 17 | trot |
+  | 3 | C: pose hip weight 1.0 -> 0.2 | 2.25 | 13.3 cm | 20 / 20 | trot |
+  | 4 | B': feet_air_time weight 0.1 -> 2.0 | 1.75-1.9 | 16 cm @0.3 m/s | 22 / 26 | trot |
+  | 5 | My walk spec (stride clock, footfall schedule, body height, joint accel, synced tail/head) | **1.25** | **16.8 cm @0.2 m/s** | **32 / 37** | **lateral-sequence walk** |
+
+  Run 5 footfall (robot vs. my spec, 1 char = 5% of a stride):
+  ```
+        robot                  spec
+  LH  █████████████·····██   ██████████████······
+  LF  ·····████████████···   ····██████████████··
+  RH  ███······███████████   ████······██████████
+  RF  ████████······██████   ████████······██████
+  ```
+  All runs track the joystick and essentially never fall. Run 5 matched the footfall chart 89% of the time (random: 40%) and kept walk tracking at 0.91.
+- **Learned:**
+  - A reward term = what it measures x its weight (the "price"). Run 2 changed what `feet_air_time` measured but left its price at 0.1: the term was -1 per episode next to `pose` +477 and tracking +1,329, so nothing changed. Make sure a term is big enough to compete before judging it.
+  - Removing a brake (C: pose no longer fines a +/-25 deg hip swing ~135 points) helped a little; adding a reason (B': pay for long air time) helped a lot. Took both.
+  - Reward tweaks can't turn a trot into a red panda walk. Real red pandas walk with a lateral-sequence walk (Plocek & Dunham 2023, 132 filmed strides; footfall timing like other ground-dwelling carnivorans). RL finds the trot because it's easiest; you have to tell it the footfall order (stride clock + schedule reward, the Walk These Ways idea).
+  - Speed = stride x strides per second. At 1.25 strides/s, a moderate 16 cm stride gives 0.2 m/s; 0.4 m/s would need 32 cm (the legs max out ~20 cm). So run 5's commands are 0.2 / 0.1 / 0.5.
+  - The run 5 head "shaking" isn't randomness (the random nod was off): my scripted nod (6 deg, 2.5 times/s) + the springy placeholder neck servo overshooting (actual 11.6 deg) + the torso pitching 5.6 deg each step = 16 deg of head tilt, 2.7 times per second. Fix: drop the nod and stabilize the head against torso tilt (from the IMU), like real animals.
+  - Spine idea (measured on a split-torso scratch model, front half 0.94 kg held in the air): an up/down arching spine needs 1.14 N·m (116% of rated, fails long holds); a side-to-side spine needs 0.00 N·m (vertical axis, gravity doesn't load it). Side-bend is the easy and the walking-relevant one; the hard part would be the mechanical hinge.
+- **Mistakes fixed:**
+  - Viewer replayed old runs with today's settings; now it rebuilds each run's env from its `config.json`.
+  - Footfall chart thought run 4 had a stride clock (every run's info has `gait_phase` now); use the env's on/off flag.
+  - My scripted speed test still asks 0.3 m/s, above run 5's 0.2 max (it reached 0.26). Update the script for run 5-style runs.
+  - zsh doesn't split `$VAR` into words like bash; write ssh/scp options out in full.
+- **Decisions and why:**
+  - Walk style comes from a footfall schedule, not reward-weight tweaks. Spec: lateral-sequence walk LH -> LF -> RH -> RF, touchdowns 0 / 0.2 / 0.5 / 0.7, duty 0.70, 1.25 strides/s, low steps (~15% of leg = 3.6 cm lift), low body, narrow stance, head low with small nod, tail level swaying opposite the body's roll.
+  - Kept from runs 2-4: calmer tail ranges, pose hip weight 0.2. Turned off: feet_air_time (the clock sets timing; its 0.25 s threshold would fine the spec's 0.24 s swings).
+  - Spine: try a side-to-side spine in sim first (like the tail experiment); hardware only if it clearly looks better.
+- **Red panda notes (decide later):**
+  - Hind feet barely lift in run 5 (0.8-1.7 cm vs front 2.4-3.4; hind knee swings only 12 deg): risk of scuffing on real floors.
+  - Head: drop the nod + stabilize against torso pitch; torso choreography (target roll/yaw/pitch that follows the stride clock); "head end carried low" body pitch; tail droop needs a pitch joint at the tip (doesn't exist).
+  - Realism still missing: servo model (BAM), delay, domain randomization, pushes.
+  - Cost: runs 2-5 about $0.57 (4 pods x ~9 min); today total ~$2.76. One stopped pod + the 20 GB volume remain.
+- **Next:** Run 6: head stabilization (no nod) + torso choreography, maybe hind-foot lift. Then start on realism.
