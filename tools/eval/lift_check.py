@@ -5,7 +5,8 @@ import jax, jax.numpy as jp, numpy as np
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from ml_collections import config_dict
-REPO = Path(__file__).resolve().parents[2]  # repo root; sys.path.insert(0, str(REPO / "sim"))
+REPO = Path(__file__).resolve().parents[2]  # repo root
+sys.path.insert(0, str(REPO / "sim"))
 import red_panda_walk as rpw
 run = REPO / "runs" / sys.argv[1]; cfg = json.load(open(run / "config.json"))
 c = config_dict.ConfigDict(cfg["env"]); c.impl = "jax"; c.pert_config.enable = False

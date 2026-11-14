@@ -4,7 +4,8 @@ import jax, jax.numpy as jp, mujoco, numpy as np
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from PIL import Image
-REPO = Path(__file__).resolve().parents[2]  # repo root; sys.path.insert(0, str(REPO / "sim"))
+REPO = Path(__file__).resolve().parents[2]  # repo root
+sys.path.insert(0, str(REPO / "sim"))
 import red_panda_walk as rpw
 CMD = float(sys.argv[2]) if len(sys.argv) > 2 else 0.3
 run = REPO / "runs" / sys.argv[1]; cfg = json.load(open(run / "config.json"))
