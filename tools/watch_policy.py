@@ -50,6 +50,8 @@ p.add_argument("--delay_ms", type=float, default=0.0,
 p.add_argument("--vx", type=float, default=0.12,
                help="fixed forward command for the GIF (inside every run's range since run 14b)")
 p.add_argument("--seconds", type=float, default=10.0, help="length of the fixed-command walk")
+p.add_argument("--terrain", type=int, default=-1,
+               help="walk on this terrain row (0-9, lumps up to 0.15-1.5 cm); -1 = the run's own floor")
 args = p.parse_args()
 run = REPO / "runs" / args.run
 cfg = json.load(open(run / "config.json"))
@@ -62,6 +64,9 @@ if "pert_config" in env_cfg:
   env_cfg.pert_config.enable = env_cfg.pert_config.enable and args.pushes
 if "servo_config" in env_cfg:
   env_cfg.servo_config.delay_ms = [args.delay_ms, args.delay_ms]
+SUFFIX = f"_terrain{args.terrain}" if args.terrain >= 0 else ""  # don't overwrite the flat results
+if args.terrain >= 0:
+  red_panda_walk.use_terrain(env_cfg, args.terrain)
 env = red_panda_walk.RedPandaWalk(config=env_cfg)
 
 # Rebuild the network shape, then load the trained weights into it.
@@ -148,7 +153,7 @@ for t in range(settle + n):
   last = contact
   qpos_log.append(np.array(d.qpos))
   heading_log.append(np.degrees(np.arctan2(R[1, 0], R[0, 0])))
-  heights.append(float(d.qpos[2]))
+  heights.append(float(env._torso_height(d)))  # above the ground under the feet
   gait_log.append((float(state.info["gait_phase"]) if env._gait_on else 0.0, contact))
 
 h = 100 * np.array(heights)
@@ -177,7 +182,7 @@ for l in FEET:
       "touchdown_ahead_std_cm": round(float(td[:, 0].std()), 2),
       "liftoff_ahead_cm": round(float(lo[:, 0].mean()), 2),
       "touchdown_outward_cm": round(float(out.mean()), 2), "steps": int(len(td))}
-json.dump(posture, open(run / "posture.json", "w"), indent=2)
+json.dump(posture, open(run / f"posture{SUFFIX}.json", "w"), indent=2)
 
 order = [("LH", 2), ("LF", 0), ("RH", 3), ("RF", 1)]
 log = gait_log
@@ -219,7 +224,7 @@ for i, q in enumerate(qpos_log):
   frames.append(Image.fromarray(renderer.render()))
 
 renderer.close()
-out = run / "walk.gif"
+out = run / f"walk{SUFFIX}.gif"
 frames[0].save(out, save_all=True, append_images=frames[1:], duration=40, loop=0)
 print(f"\nvideo (side view, {args.vx:.2f} m/s): {out}  ({len(frames)} frames, {len(frames) / 25:.0f} s)")
-print(f"posture numbers: {run / 'posture.json'}")
+print(f"posture numbers: {run / f'posture{SUFFIX}.json'}")

@@ -70,7 +70,12 @@ p.add_argument("--ppo", action="append", default=[], metavar="KEY=VALUE",
                help="override one PPO setting (repeatable), e.g. num_evals=3")
 p.add_argument("--no_checkpoints", action="store_true",
                help="skip the ~85 MB orbax checkpoints (speed experiments)")
+p.add_argument("--compile_cache", default=None, metavar="DIR",
+               help="JAX persistent compilation cache: repeat runs reuse compiled code")
 args = p.parse_args()
+if args.compile_cache:
+  jax.config.update("jax_compilation_cache_dir", args.compile_cache)
+  jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
 T_IMPORTS = time.time()
 
 out = REPO / "runs" / args.name
@@ -108,8 +113,21 @@ else:
       raise SystemExit(f"--set: no setting named {key}")
     node[last] = json.loads(value)
     print(f"override: {key} = {node[last]}")
+  if env_cfg.terrain_config.enable:
+    # Terrain: a foot on a lump touches it at up to ~3 points (measured 11-12 contacts
+    # per robot standing on the hardest level) vs 1 on the flat plane. Too-small
+    # buffers make Warp drop contacts silently, so size them for 16 per robot.
+    env_cfg.naconmax = 16 * ppo_cfg.num_envs
+    env_cfg.njmax = 80
   env = red_panda_walk.RedPandaWalk(config=env_cfg)
-  eval_env = red_panda_walk.RedPandaWalk(config=env_cfg)
+  eval_cfg = env_cfg
+  if env_cfg.terrain_config.enable:
+    # Run 22a crashed (GPU out of memory) at an eval: the eval env had the training
+    # env's contact budget (16 x 8192) for its 128 robots, and Warp's curved-contact
+    # scratch buffers (~2 KB per possible contact, each) are sized by that budget.
+    eval_cfg = env_cfg.copy_and_resolve_references()
+    eval_cfg.naconmax = 16 * 128  # Brax's default num_eval_envs
+  eval_env = red_panda_walk.RedPandaWalk(config=eval_cfg)
   rc = env_cfg.get("randomize_config", None)  # run 10: friction, mass, servo stiffness...
   randomizer = red_panda_walk.make_domain_randomizer(env) if rc and rc.enable else None
 
@@ -122,7 +140,7 @@ if args.tiny:
   ppo_cfg.num_evals = 2
   ppo_cfg.num_resets_per_eval = 1
   extra["num_eval_envs"] = 8
-  env_cfg.naconmax = 64  # buffers sized for 8 robots, not 8192
+  env_cfg.naconmax = 128 if args.env != "go1" and env_cfg.terrain_config.enable else 64  # 8 robots, not 8192
 
 T_ENV = time.time()
 with open(out / "config.json", "w") as f:
@@ -200,6 +218,7 @@ timing = {
     "steps": int(ppo_cfg.num_timesteps),
     "train_steps_per_s": round(ppo_cfg.num_timesteps / max(sum(c[1] for c in chunks), 1e-9)),
     "checkpoints": not args.no_checkpoints,
+    "compile_cache": args.compile_cache,
     "ppo_overrides": args.ppo,
 }
 json.dump(timing, open(out / "timing.json", "w"), indent=2)

@@ -26,6 +26,8 @@ import numpy as np
 
 from mujoco_playground._src import mjx_env
 
+import terrain  # sim/terrain.py (same folder)
+
 XML_PATH = Path(__file__).resolve().parent / "red_panda.xml"
 
 # RED PANDA: names instead of hard-coded index ranges, because qpos and ctrl
@@ -57,7 +59,14 @@ def default_config() -> config_dict.ConfigDict:
       # of rated vs run 13 (Pupper legs, knee ~93 deg crouch). CAD may adjust lengths.
       model_config=config_dict.create(
           leg_scale=0.7,
-          stance_knee_deg=45.0,
+          stance_knee_deg=45.0,   # runs 14-19: level torso, every knee 45 deg
+          # Run 20: home pose = the walking posture. Torso centre stance_height up,
+          # tilted stance_pitch_deg nose-down, each foot on the floor under its hip;
+          # the knees follow (front ~61, hind ~48 deg). Replaces stance_knee_deg when
+          # stance_height > 0. Runs 14-19's level 45/45 home fought the 3 deg slant
+          # target, and the hind legs ended up nearly straight (30 deg) and skimmed.
+          stance_height=0.158,
+          stance_pitch_deg=2.0,
       ),
       # RED PANDA (run 10): domain randomization. Each training robot gets its own
       # world, so the policy can't rely on exact numbers. Used by tools/train_walk.py
@@ -135,13 +144,13 @@ def default_config() -> config_dict.ConfigDict:
           # touchdown offsets in FEET order (fl, fr, bl, br) = (LF, RF, LH, RH);
           # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70
           offsets=[0.20, 0.70, 0.00, 0.50],
-          base_height=0.163,  # torso target = the home stance (run 14b; was 0.19 for Pupper legs, knee 80)
+          base_height=0.158,  # torso target = the home stance (run 20; 0.163 for runs 14b-19)
           # Run 6: torso choreography. Lean (roll) a few degrees toward the side whose
           # feet are down (weight shift onto the supporting pair = the waddle), once per
           # stride, and carry the head end slightly low. No twist: a rigid torso can't
           # yaw without turning (that would need the side-bend spine).
           roll_amp_deg=3.0,
-          pitch_deg=3.0,                   # + = nose down
+          pitch_deg=2.0,                   # + = nose down (run 20: = the home pose's slant; was 3.0)
       ),
       reward_config=config_dict.create(
           scales=config_dict.create(
@@ -176,7 +185,10 @@ def default_config() -> config_dict.ConfigDict:
               # suspect this first. Compare reward/energy's share with Go1's after run 1.
               energy=-0.007,
               # Feet.
-              feet_clearance=-2.0,
+              # Run 18: off (was -2.0, Go1's). It charges any foot moving horizontally below
+              # max_foot_height, so it rewarded "hover, then drop straight down" (a stomp)
+              # and duplicated the swing arc, which already says how high the foot goes.
+              feet_clearance=0.0,
               feet_height=-0.2,
               feet_slip=-0.1,
               # RED PANDA (run 4): Go1 0.1. At 0.1 this term was ~0.1% of the total
@@ -210,6 +222,19 @@ def default_config() -> config_dict.ConfigDict:
               # 0 = off (set per experiment). Run 14b's gait would pay ~-250/episode at
               # -30 (front feet 6.6 cm ahead in stance, hind 2.9 cm out); a centred gait ~-32.
               foot_under_hip=-30.0,  # run 16 (run 15a: front feet +7.8 -> +4.1 cm, knee 62% of rated)
+              # Run 17: downward foot speed^2 in the last cm before touchdown (0 = off).
+              # Run 16's hind feet landed hard enough to bounce the rear end: the other
+              # hind foot hopped 1 mm for ~50 ms at every hind landing (21+15 taps in 10 s).
+              # Run 17: -15 -> run 16's gait would pay ~-190/episode (hind feet land at
+              # 0.18-0.21 m/s median, 1.7x the front); landing at ~0.1 m/s pays ~-40.
+              # Run 18: -15 -> -5. With the bell arc, following the arc already lands
+              # gently; at -15 even a perfect bell paid ~-180/episode and skimming beat it
+              # by only ~50 (reward audit). At -5: bell -60, skim -206, stomp -511.
+              soft_landing=-5.0,
+              # Run 22b: knee should fold during swing (see _swing_knee_err2). 0 = off.
+              swing_knee=0.0,
+              # Run 23c: clearance floor, once per swing (see swing_floor_lift). 0 = off.
+              swing_floor=0.0,
           ),
           # RED PANDA: two sigmas instead of Go1's one (0.25). Our walk speeds are
           # 4x slower than Go1's (error^2 16x smaller) -> 0.25/16; turn speeds are
@@ -224,6 +249,23 @@ def default_config() -> config_dict.ConfigDict:
           max_foot_height=0.035,  # run 14b: 2.5 cm lift + 0.97 cm foot radius (was 0.046)
           body_sway_sigma=0.0012,  # (2 deg)^2 in rad^2: being flat when asked for 3 deg scores 0.1
           swing_lift=0.025,         # arc peak above resting: 15% of leg (run 14b: 16.7 cm legs; was 0.036)
+          # Run 18: swing target shape. "bell" = lift x sin^2: zero vertical speed at
+          # touchdown, so following the arc IS a soft landing (the sine arc demanded
+          # ~0.32 m/s and fought soft_landing; run 17's hind feet skimmed to escape).
+          swing_arc="bell",
+          # Run 21: extra swing_height price for the hind feet only. A hind lift needs
+          # 47 deg of knee fold vs 40 front, so at x1 skimming was the cheaper deal.
+          swing_hind_mult=1.0,
+          # Run 22b: extra knee bend at mid-swing over the home pose, (front, hind) deg.
+          # IK: 28 / 32 deg lifts the foot 2.5 cm straight up from the home stance.
+          swing_knee_fold_deg=[28.0, 32.0],
+          # Run 23: "home" (22b: target = home knee + fold) or "liftoff" (target = the knee's
+          # angle when this swing began + fold; crouching earns nothing). IK at 0.12 m/s:
+          # lift-off (foot 4.8 cm behind the hip) to 2.5 cm up under the hip = 40 / 47 deg.
+          swing_knee_ref="home",
+          swing_knee_fold_liftoff_deg=[40.0, 47.0],
+          # Run 23c: every swing should peak at least this high above resting (0 cost above).
+          swing_floor_lift=0.015,
           foot_rest_height=0.0097,  # foot-center height when planted (1 cm ball, sunk 0.3 mm)
           # RED PANDA (run 2): Go1 rewards air time above 0.1 s per step. Run 1's quick
           # steps (~0.19 s in the air) already beat that, so nothing pushed for longer
@@ -283,6 +325,23 @@ def default_config() -> config_dict.ConfigDict:
           # Probability of not zeroing out new command.
           b=[0.9, 0.25, 0.5],
       ),
+      # Terrain (Tier 2): lumpy rug-like bumps instead of the flat plane. See
+      # sim/terrain.py for the tile layout. Off = the flat plane, exactly as runs 1-21.
+      terrain_config=config_dict.create(
+          enable=False,
+          tile_size=3.0,           # m; a 20 s episode walks <= 2.8 m
+          n_levels=10,             # rows along x: level i has lumps up to max_height*(i+1)/10
+          n_cols=8,                # columns along y: terrain types
+          flat_cols=[3, 7],        # 2 of 8 columns flat -> 75% lumpy / 25% flat
+          border=3.0,              # m of flat ground around the tiles
+          resolution=0.01,         # m per grid cell
+          max_height=0.015,        # m: hardest row's tallest lumps (hind feet reach ~2.4 cm at duty 0.60)
+          lump_radius=[0.02, 0.04],  # m: lumps 4-8 cm wide
+          lump_cover=0.6,          # lump discs cover ~60% of a tile (overlaps counted)
+          seed=0,                  # same map every run
+          spawn_level=-1,          # -1 = random row per robot; >= 0 = always this row (evals)
+          spawn_col=-1,            # -1 = random column; >= 0 = always this column (evals)
+      ),
       # RED PANDA: "jax" runs on the Mac; use "warp" on an NVIDIA GPU.
       impl="jax",
       naconmax=4 * 8192,
@@ -303,10 +362,37 @@ def _bisect(f, lo, hi, iters=60):
 
 
 def build_spec(config) -> mujoco.MjSpec:
-  """RED PANDA (run 14): the robot model with model_config applied.
+  """RED PANDA (run 14): the robot model with model_config (and terrain) applied.
 
   Returns an MjSpec (the env compiles it; the viewer adds a floor texture first).
   """
+  spec = _robot_spec(config)
+  tc = config.get("terrain_config", None)
+  if tc is not None and tc.enable:
+    add_terrain(spec, tc)
+  return spec
+
+
+def add_terrain(spec: mujoco.MjSpec, tc) -> None:
+  """Terrain: swaps the flat floor plane for a lumpy height field (sim/terrain.py).
+
+  Keeps the geom's name "floor", so the foot contact sensors and friction
+  randomization work unchanged.
+  """
+  heights, half_x, half_y = terrain.make_heights(tc)
+  top = max(float(heights.max()), 1e-3)
+  nrow, ncol = heights.shape
+  spec.add_hfield(
+      name="terrain", nrow=nrow, ncol=ncol,
+      size=[half_x, half_y, top, 0.05],    # x/y half-size, max height, 5 cm of solid base
+      userdata=(heights / top).flatten().tolist())
+  floor = spec.geom("floor")
+  floor.type = mujoco.mjtGeom.mjGEOM_HFIELD
+  floor.hfieldname = "terrain"
+
+
+def _robot_spec(config) -> mujoco.MjSpec:
+  """The robot with model_config applied, standing on the flat floor (run 14)."""
   spec = mujoco.MjSpec.from_file(XML_PATH.as_posix())
   mc = config.get("model_config", None)
   if mc is None:  # configs from runs 1-13
@@ -350,7 +436,57 @@ def build_spec(config) -> mujoco.MjSpec:
         ctrl[m.actuator(f"{leg}_{j}").id] = d.qpos[m.jnt_qposadr[m.joint(f"{leg}_{j}").id]]
     home = next(key for key in spec.keys if key.name == "home")
     home.qpos, home.ctrl = np.array(d.qpos), ctrl
+  if mc.get("stance_height", 0.0) > 0:  # run 20: height + nose-down slant, knees follow
+    m = spec.compile()
+    d = mujoco.MjData(m)
+    d.qpos[:] = m.key_qpos[0]
+    pitch = np.deg2rad(mc.stance_pitch_deg)
+    d.qpos[2] = mc.stance_height
+    d.qpos[3:7] = [np.cos(pitch / 2), 0.0, np.sin(pitch / 2), 0.0]  # about y: + = nose down
+    radius = m.geom_size[m.geom("fl_foot").id][0]
+    ctrl = np.array(m.key_ctrl[0])
+    for leg in LEGS:
+      knee_sign = -1.0 if leg.startswith("f") else 1.0
+      adr = {j: m.jnt_qposadr[m.joint(f"{leg}_{j}").id] for j in ("hip_side", "hip", "knee")}
+      d.qpos[adr["hip_side"]] = 0.0
+      foot, hip = m.site(f"{leg}_foot").id, m.body(f"{leg}_hip").id
+
+      def place(h, kb, adr=adr):
+        d.qpos[adr["hip"]], d.qpos[adr["knee"]] = h, knee_sign * kb
+        mujoco.mj_kinematics(m, d)
+
+      def hip_under(kb, foot=foot, hip=hip):
+        def ahead(h):
+          place(h, kb)
+          return d.site_xpos[foot][0] - d.xpos[hip][0]
+        grid = np.linspace(-1.5, 1.5, 61)
+        vals = [ahead(h) for h in grid]
+        i = next(i for i in range(60) if (vals[i] > 0) != (vals[i + 1] > 0))
+        return _bisect(ahead, grid[i], grid[i + 1])
+
+      def above_floor(kb, foot=foot):  # foot height above touching, with the foot under the hip
+        place(hip_under(kb), kb)
+        return d.site_xpos[foot][2] - radius
+
+      kb = _bisect(above_floor, 0.0, np.deg2rad(120.0))  # straight = lowest foot, bent = higher
+      place(hip_under(kb), kb)
+      for j in ("hip_side", "hip", "knee"):
+        ctrl[m.actuator(f"{leg}_{j}").id] = d.qpos[adr[j]]
+    home = next(key for key in spec.keys if key.name == "home")
+    home.qpos, home.ctrl = np.array(d.qpos), ctrl
   return spec
+
+
+def use_terrain(config, level: int, col: int = 1) -> None:
+  """Evals: put any run's config (even one from before terrain existed) on one tile.
+
+  Column 1 is lumpy with lumpy neighbors on both sides; the flat columns are 3 and 7.
+  Keeps a newer run's own map settings if it has them.
+  """
+  if "terrain_config" not in config:
+    config.terrain_config = default_config().terrain_config
+  tc = config.terrain_config
+  tc.enable, tc.spawn_level, tc.spawn_col = True, level, col
 
 
 def make_domain_randomizer(env):
@@ -434,6 +570,23 @@ class RedPandaWalk(mjx_env.MjxEnv):
     self._neck_act = act_ids(NECK_JOINTS)
 
     self._default_pose = jp.array(home.qpos[self._leg_qpos])  # legs only
+
+    # Terrain (Tier 2): the height grid's shape, for looking up the ground under
+    # a foot. The grid itself is read from the model (mjx_model.hfield_data).
+    tc = self._config.get("terrain_config", None)
+    self._terrain_on = tc is not None and tc.enable
+    if self._terrain_on:
+      hid = m.hfield("terrain").id
+      assert m.nhfield == 1 and m.hfield_adr[hid] == 0
+      self._hf = (int(m.hfield_nrow[hid]), int(m.hfield_ncol[hid]),
+                  *(float(v) for v in m.hfield_size[hid][:3]))  # nrow, ncol, half_x, half_y, max_z
+      # Sample points under a foot ball for _feet_height: the center plus two rings
+      # of 8 (at 0.5 r and 0.9 r). Columns: x offset, y offset, sqrt(r^2 - d^2).
+      r = float(m.geom(FEET[0]).size[0])
+      ring = [(0.0, 0.0)] + [(f * r * np.cos(a), f * r * np.sin(a))
+                             for f in (0.5, 0.9) for a in np.arange(8) * np.pi / 4]
+      self._foot_radius = r
+      self._foot_ring = jp.array([(x, y, np.sqrt(r * r - x * x - y * y)) for x, y in ring])
 
     # RED PANDA (run 9): servo model. Each actuator's joint angle/speed, in ctrl order.
     act_joint = m.actuator_trnid[:, 0]
@@ -639,6 +792,23 @@ class RedPandaWalk(mjx_env.MjxEnv):
     new_quat = math.quat_mul(qpos[3:7], quat)
     qpos = qpos.at[3:7].set(new_quat)
 
+    if self._terrain_on:  # Terrain: start on a random tile, standing on top of its lumps
+      tc = self._config.terrain_config
+      rng, k1, k2 = jax.random.split(rng, 3)
+      level = jax.random.randint(k1, (), 0, tc.n_levels)  # (curriculum: picked per robot later)
+      col = jax.random.randint(k2, (), 0, tc.n_cols)
+      if tc.get("spawn_level", -1) >= 0:  # evals: one fixed tile
+        level = jp.array(tc.spawn_level)
+      if tc.get("spawn_col", -1) >= 0:
+        col = jp.array(tc.spawn_col)
+      cx, cy = terrain.tile_center(tc, level, col)
+      qpos = qpos.at[0:2].add(jp.array([cx, cy]))
+      # Raise the robot by the tallest ground under its footprint (1 cm grid over
+      # 40 x 40 cm: covers the feet at any yaw), so no foot starts inside a lump.
+      gx = qpos[0] + jp.linspace(-0.2, 0.2, 41)[:, None]
+      gy = qpos[1] + jp.linspace(-0.2, 0.2, 41)[None, :]
+      qpos = qpos.at[2].add(jp.max(self._ground(gx, gy)))
+
     # d(xyzrpy)=U(-0.5, 0.5)
     rng, key = jax.random.split(rng)
     qvel = qvel.at[0:6].set(
@@ -718,7 +888,15 @@ class RedPandaWalk(mjx_env.MjxEnv):
         "neck_params": neck_params,  # RED PANDA
         "gait_phase": gait_phase,  # RED PANDA (run 5): 0..1 through the stride
         "last_leg_qvel": jp.zeros(len(LEG_JOINTS)),  # RED PANDA (run 5): for joint_acc
+        # Run 23 (_track_swings): per leg, by the gait clock
+        "was_swing": jp.zeros(4, dtype=bool),        # scheduled in the air last step
+        "liftoff_knee": self._default_pose[2::3],    # knee angle when the current swing began
+        "sched_peak": jp.zeros(4),                   # highest foot height in the current swing
+        "swing_end": jp.zeros(4, dtype=bool),        # a swing ended this step
+        "swing_end_peak": jp.zeros(4),               # ...and how high that swing got
     }
+    if self._terrain_on:
+      info["terrain_level"] = level  # which row (difficulty) this robot started on
     if self._servo_on:  # RED PANDA (run 9)
       # Motor delay for this episode, in physics substeps (sim_dt each).
       rng, key = jax.random.split(rng)
@@ -779,9 +957,10 @@ class RedPandaWalk(mjx_env.MjxEnv):
     contact_filt = contact | state.info["last_contact"]
     first_contact = (state.info["feet_air_time"] > 0.0) * contact_filt
     state.info["feet_air_time"] += self.dt
-    p_f = data.site_xpos[self._feet_site_id]
-    p_fz = p_f[..., -1]
+    p_fz = self._feet_height(data)  # terrain: above the ground under each foot
     state.info["swing_peak"] = jp.maximum(state.info["swing_peak"], p_fz)
+    if self._gait_on:  # run 23: lift-off knee angle and per-swing peak, by the gait clock
+      self._track_swings(data, state.info, p_fz)
 
     obs = self._get_obs(data, state.info)
     done = self._get_termination(data)
@@ -849,10 +1028,91 @@ class RedPandaWalk(mjx_env.MjxEnv):
 
     return jax.lax.scan(substep, data, jp.arange(n))[0]
 
+  # --- Terrain (Tier 2): every height is measured from the ground under it. ---
+  # With terrain off, the ground is 0 everywhere, so these give the same numbers
+  # as the old world-floor heights (x - 0 = x exactly).
+
+  def _ground(self, x, y):
+    """Ground height under world point(s) (x, y): 0 on the flat floor."""
+    if not self._terrain_on:
+      return jp.zeros_like(x)
+    return terrain.ground_height(jp, self.mjx_model.hfield_data, *self._hf, x, y)
+
+  def _feet_height(self, data):
+    """Each foot ball's center height above the ground it would touch (fl, fr, bl, br).
+
+    Reads the ball radius whenever the foot touches, on flat ground or a lump's
+    side. (Just "ground straight below" reads up to ~0.6 cm too high on a 50 deg
+    slope, because the ball touches the slope off-center.) At each sample point
+    in the ball's footprint, the center can't go lower than ground + sqrt(r^2 - d^2);
+    the highest of those is where the center sits when touching.
+    """
+    p = data.site_xpos[self._feet_site_id]
+    if not self._terrain_on:
+      return p[:, 2]
+    gx = p[:, 0:1] + self._foot_ring[:, 0]          # (4 feet, 17 points)
+    gy = p[:, 1:2] + self._foot_ring[:, 1]
+    touching_z = jp.max(self._ground(gx, gy) + self._foot_ring[:, 2], axis=1)
+    return p[:, 2] - touching_z + self._foot_radius
+
+  def _torso_height(self, data):
+    """Torso height above the ground the feet stand on (mean under the 4 feet).
+
+    Not the ground under the torso's center: a lump under the belly isn't
+    something the legs stand on, and it would jerk the height target around.
+    """
+    p = data.site_xpos[self._feet_site_id]
+    return data.qpos[2] - jp.mean(self._ground(p[:, 0], p[:, 1]))
+
+  def _track_swings(self, data, info, feet_h):
+    """Run 23: per-swing bookkeeping on the gait clock (not on contact: a dragging foot
+    never leaves the ground, so contact-based bookkeeping would never see its swing).
+
+    Remembers each knee's angle when its scheduled swing starts (for the lift-off
+    knee fold) and the highest the foot got during the swing (for the clearance floor).
+    """
+    prog = jp.mod(info["gait_phase"] - self._gait_offsets, 1.0)
+    swing = prog >= self._gait.duty
+    started = swing & ~info["was_swing"]
+    ended = ~swing & info["was_swing"]
+    knee = data.qpos[self._leg_qpos[2::3]]
+    info["liftoff_knee"] = jp.where(started, knee, info["liftoff_knee"])
+    info["swing_end"] = ended
+    info["swing_end_peak"] = info["sched_peak"]  # the swing that just ended (used where swing_end)
+    info["sched_peak"] = jp.where(
+        started, feet_h, jp.where(swing, jp.maximum(info["sched_peak"], feet_h), info["sched_peak"]))
+    info["was_swing"] = swing
+
+  def _swing_knee_err2(self, data, info):
+    """Run 22b: (knee angle - fold target)^2 per leg while its foot should be in the air.
+
+    Target = the home-pose knee, bent further by swing_knee_fold_deg (front, hind) times
+    the bell shape (0 at lift-off and touchdown, full at mid-swing). 28 / 32 deg lifts
+    the foot 2.5 cm straight up from the home stance (IK). Targets the "stiff pendulum"
+    swing of skimming legs: thigh swings forward, knee stays straight, foot slides.
+    """
+    prog = jp.mod(info["gait_phase"] - self._gait_offsets, 1.0)  # 0..1 since touchdown
+    swing = prog >= self._gait.duty
+    s_prog = jp.clip((prog - self._gait.duty) / (1.0 - self._gait.duty), 0.0, 1.0)
+    shape = jp.square(jp.sin(jp.pi * s_prog))
+    rc = self._config.reward_config
+    if rc.get("swing_knee_ref", "home") == "liftoff":
+      # Run 23: fold measured from the knee's own angle at lift-off, so a knee that is
+      # bent all the time (22b's crouch) gets no credit; only bending during the swing counts.
+      front, hind = np.deg2rad(rc.swing_knee_fold_liftoff_deg)
+      base = info["liftoff_knee"]
+    else:  # run 22b: from the home pose
+      front, hind = np.deg2rad(rc.swing_knee_fold_deg)
+      base = self._default_pose[2::3]
+    fold = jp.array([-front, -front, hind, hind])  # front knees bend negative, hind positive
+    knee = data.qpos[self._leg_qpos[2::3]]           # fl, fr, bl, br knees
+    target = base + fold * shape
+    return jp.where(swing, jp.square(knee - target), 0.0)
+
   def _get_termination(self, data: mjx.Data) -> jax.Array:
     fall_termination = self.get_upvector(data)[-1] < 0.0
     # RED PANDA: also end if the torso sinks too low (belly-flop).
-    too_low = data.qpos[2] < self._config.min_torso_height
+    too_low = self._torso_height(data) < self._config.min_torso_height
     return fall_termination | too_low
 
   def _noisy(self, info, x, scale):
@@ -988,13 +1248,39 @@ class RedPandaWalk(mjx_env.MjxEnv):
         prog = jp.mod(info["gait_phase"] - self._gait_offsets, 1.0)  # 0..1 since touchdown
         swing = prog >= self._gait.duty
         s_prog = jp.clip((prog - self._gait.duty) / (1.0 - self._gait.duty), 0.0, 1.0)
-        target = rc.foot_rest_height + rc.swing_lift * jp.sin(jp.pi * s_prog)
-        foot_z = data.site_xpos[self._feet_site_id][:, 2]
+        if rc.get("swing_arc", "sine") == "bell":  # run 18: eases in AND out
+          shape = jp.square(jp.sin(jp.pi * s_prog))  # zero speed at lift-off and touchdown
+        else:                                        # runs 7-17: comes down at ~0.32 m/s
+          shape = jp.sin(jp.pi * s_prog)
+        target = rc.foot_rest_height + rc.swing_lift * shape
+        foot_z = self._feet_height(data)  # terrain: above the ground under each foot
         walking = jp.linalg.norm(info["command"]) >= 0.01
-        terms["swing_height"] = jp.sum(jp.where(swing, jp.square(foot_z - target), 0.0)) * walking
-      terms["base_height"] = jp.square(data.qpos[2] - self._gait.base_height)
+        # Run 21: hind feet (bl, br) can cost more to skim; 1.0 = same as the front.
+        hind = rc.get("swing_hind_mult", 1.0)
+        foot_w = jp.array([1.0, 1.0, hind, hind])  # FEET order: fl, fr, bl, br
+        terms["swing_height"] = jp.sum(
+            jp.where(swing, foot_w * jp.square(foot_z - target), 0.0)) * walking
+      if "swing_knee" in rc.scales:  # run 22b (0 = off; still logged)
+        walking = jp.linalg.norm(info["command"]) >= 0.01
+        terms["swing_knee"] = jp.sum(self._swing_knee_err2(data, info)) * walking
+      if "swing_floor" in rc.scales:  # run 23c (0 = off; still logged)
+        # Once per swing, when it ends: (floor - how high the foot got)^2, 0 if it cleared.
+        walking = jp.linalg.norm(info["command"]) >= 0.01
+        lift = info["swing_end_peak"] - rc.foot_rest_height
+        short = jp.maximum(rc.swing_floor_lift - lift, 0.0)
+        terms["swing_floor"] = jp.sum(jp.where(info["swing_end"], jp.square(short), 0.0)) * walking
+      terms["base_height"] = jp.square(self._torso_height(data) - self._gait.base_height)
       terms["joint_acc"] = jp.sum(
           jp.square((leg_qvel - info["last_leg_qvel"]) / self.dt))
+      if "soft_landing" in rc.scales:  # run 17
+        # Feet should be set down, not stomped: downward foot speed^2 while the foot
+        # is within 1 cm of its resting height (measured just before contact; once the
+        # contact flag is on, the foot has already stopped). Terrain: measured from
+        # the ground under the foot, so landing on top of a lump counts too.
+        foot_vz = data.sensordata[self._foot_linvel_sensor_adr][:, 2]
+        foot_h = self._feet_height(data) - rc.foot_rest_height
+        near = foot_h < 0.01
+        terms["soft_landing"] = jp.sum(jp.where(near, jp.square(jp.minimum(foot_vz, 0.0)), 0.0))
       if "foot_under_hip" in rc.scales:  # run 15a
         # Feet on the ground should sit under their thigh joints (where a straight leg
         # hangs; the hip body itself is 3 cm further in), in the torso's frame:
@@ -1073,8 +1359,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
     feet_vel = data.sensordata[self._foot_linvel_sensor_adr]
     vel_xy = feet_vel[..., :2]
     vel_norm = jp.sqrt(jp.linalg.norm(vel_xy, axis=-1))
-    foot_pos = data.site_xpos[self._feet_site_id]
-    foot_z = foot_pos[..., -1]
+    foot_z = self._feet_height(data)  # terrain: above the ground under each foot
     delta = jp.abs(foot_z - self._config.reward_config.max_foot_height)
     return jp.sum(delta * vel_norm)
 
