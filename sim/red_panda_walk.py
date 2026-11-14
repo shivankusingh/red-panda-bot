@@ -140,7 +140,9 @@ def default_config() -> config_dict.ConfigDict:
       gait_config=config_dict.create(
           enable=True,
           freq_hz=1.25,                    # strides per second (spec: 1.0-1.6, never 3-4)
-          duty=0.70,                       # each foot down 70% of the cycle
+          # Run 24a: 0.70 -> 0.60. More swing time (0.32 s) lets the hind feet physically
+          # reach ~2.4 cm (leg-in-air test); at 0.70 the servos top out at ~1.6 cm.
+          duty=0.60,                       # each foot down 60% of the cycle
           # touchdown offsets in FEET order (fl, fr, bl, br) = (LF, RF, LH, RH);
           # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70
           offsets=[0.20, 0.70, 0.00, 0.50],
@@ -234,7 +236,9 @@ def default_config() -> config_dict.ConfigDict:
               # Run 22b: knee should fold during swing (see _swing_knee_err2). 0 = off.
               swing_knee=0.0,
               # Run 23c: clearance floor, once per swing (see swing_floor_lift). 0 = off.
-              swing_floor=0.0,
+              # Run 24a default: sized so 20b's skimming hind feet pay what swing_height
+              # charges them. With bumps and no knee term: hind 1.5-1.7 cm, knee 72% of rated.
+              swing_floor=-22000.0,
           ),
           # RED PANDA: two sigmas instead of Go1's one (0.25). Our walk speeds are
           # 4x slower than Go1's (error^2 16x smaller) -> 0.25/16; turn speeds are
@@ -328,7 +332,7 @@ def default_config() -> config_dict.ConfigDict:
       # Terrain (Tier 2): lumpy rug-like bumps instead of the flat plane. See
       # sim/terrain.py for the tile layout. Off = the flat plane, exactly as runs 1-21.
       terrain_config=config_dict.create(
-          enable=False,
+          enable=True,             # run 24a default (False = the flat plane of runs 1-21)
           tile_size=3.0,           # m; a 20 s episode walks <= 2.8 m
           n_levels=10,             # rows along x: level i has lumps up to max_height*(i+1)/10
           n_cols=8,                # columns along y: terrain types
