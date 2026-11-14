@@ -55,8 +55,8 @@ Update this table when I switch an area.
 | Tier | Skills |
 |---|---|
 | 1: the project | Walk and turn on gamepad command; rear up into the tail tripod, hold it, come back down; eyes blink and react. On the real robot. |
-| 2: polish | Fall recovery; idle behaviors; reactions; measured results |
-| 3: stretch | Free stand with tail balancing; voice commands |
+| 2: polish | Fall recovery; idle behaviors; reactions; measured results; walking over small bumps, cables and rug edges (blind, rough-terrain training) |
+| 3: stretch | Free stand with tail balancing; voice commands; climbing over objects (slow high steps over ~3-5 cm things; climbing onto a low ~5-8 cm ledge: front paws up, shift weight, hind legs up; needs the depth camera) |
 
 Training order: walking → rearing into the tripod → fall recovery → free stand.
 
@@ -72,7 +72,7 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Servos | STS3215 C018 (12 V) for all legs and the tail. Compare loads to rated torque, not stall |
 | Power | One 3S LiPo for servos; separate 5 V / 5 A regulator for the Pi; shared ground |
 | Bus | Legs, tail, and neck on the serial bus; ears on PWM |
-| Rough-model body | 32 × 10 × 5 cm, hips ±12 cm front/back of center; Pupper legs (12.35 + 11.5 cm). Later sim test: Pupper's 27.6 cm body for rearing comparison |
+| Rough-model body | 32 × 10 × 5 cm, hips ±12 cm front/back of center; legs = Pupper ×0.7 (8.64 + 8.05 cm, run 14b), standing with knees bent 45° and feet under the hips (torso ~16 cm, red panda height). Final lengths depend on fitting the servos in CAD. Later sim test: Pupper's 27.6 cm body for rearing comparison |
 | Rough-model mass | 1.8 kg nominal, a bit above the parts estimate (~1.64–1.74 kg, servos ≈ 55 g each × 18) so the torque checks have margin. Train with mass randomized ±10% (1.62–1.98 kg); report torques at 1.8 kg (go/no-go) and 1.98 kg (stress test) |
 | Neck | 3 servos: turn, then nod, then tilt (head tilt for personality). Like the tail while walking: animation-driven, randomized "looking around" during training (switchable), and the walking policy sees the neck angles and speeds |
 | Battery placement | Center of the torso for the rough model; front/back is a later sim experiment |
@@ -85,6 +85,7 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Simulator | MuJoCo Playground (Open Duck Mini + BAM servo model already work there). Bake-off vs. Isaac Lab skipped; a short Go1 example run checks the setup instead |
 | Compute | Rented cloud GPU (~$10–40/month); university GPU cluster as backup. Shut machines down when idle |
 | Control code | Python first; C++ once the Python version walks |
+| Jumping | Ruled out for STS3215 servos. Sim (run 15 era, legs x0.7, 1.8 kg): a full-effort crouch-and-extend leaves the ground for 40 ms = ~2 mm. Torque is enough; speed isn't (without the speed limit: 218 ms = ~6 cm). Jumping needs fast direct-drive motors (e.g. Mini Cheetah class) |
 | Depth camera (candidate, Tier 2/3) | For stepping over obstacles (blind policy only recovers after bumping). Mount in the lower front corner of the torso, angled ~35° down, behind a dark tinted window (reads as the dark chest fur). Not on the head: it would nearly double the neck nod's holding torque, and a moving head makes the height map harder. Shift the battery back to balance it. Leave room in the torso CAD. Add after Tier 1 works on the real robot; train with height maps + teacher-student |
 | Teacher-student | Only if it measurably helps; try asymmetric actor-critic first |
 

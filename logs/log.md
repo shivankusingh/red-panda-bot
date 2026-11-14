@@ -544,3 +544,29 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Double touchdowns (front-left / right-hind ~2 per stride) persist: jitter / bounce, same as run 13.
   - Compare runs by measurements, not total reward, once the body or rewards change.
 - **Cost so far:** ~$4.65. Stopped pod `oc24xznq0zaal3` plus the 20 GB volume.
+
+### Run 15: three experiments in parallel on the short-leg body (15a / 15b / 15c)
+- **Did:** Made run 14b's body the default (legs x0.7, home knee 45 deg, base_height 0.163, swing lift 2.5 cm, max_foot_height 0.035, commands [0.14, 0.07, 0.5]); CLAUDE.md's "Rough-model body" row updated. Added a `foot_under_hip` cost: per planted foot, (fore/aft^2 + sideways^2) relative to its thigh joint (where a straight leg hangs; the hip body is 3 cm further in), in the torso frame. Checked: the env's term gives -249/episode on run 14b's gait at weight -30, matching a separate measurement. Three pods in parallel on the shared volume (each writes only its own folder): 15a = foot_under_hip -30, 15b = action_rate -0.01 -> -0.5, 15c = base_height -20 -> -500. ~12.7 min each, ~$0.56 total.
+- **Results** (posture at 0.12 m/s; hardware check at 1.8 kg; stress test at 0.12 m/s):
+
+  | | 14b | 15a feet under hips | 15b smoothness x50 | 15c height x25 |
+  |---|---|---|---|---|
+  | Torso height (target 16.3) | 14.3 cm | 15.4 | 15.0 | **15.8** |
+  | Front feet land / lift off | +7.8 / +4.4 cm | **+4.1 / +1.2** | +1.8 / -2.4 | +6.6 / +2.0 |
+  | Feet outward | 3.4-5.0 cm | **3.0-4.4** | 3.8-6.8 | 2.9-4.3 |
+  | Touchdowns per foot in 10 s (~12.5 = one per stride) | 14-26 | 13-21 | **12-19** | 12-21 (front fixed) |
+  | Footfall pattern / speed test | on spec / ok | on spec / ok | **drifted / sideways 0.03 of 0.07** | on spec / ok |
+  | Knee RMS current (rated 0.9 A) | 0.62 A (69%) | 0.56 A (62%) | 0.53 A (58%) | 0.63 A (70%) |
+  | Knee peak (99th) | 1.24 N*m | 1.06 | 1.08 | 1.25 |
+  | Stress test | 0/16 everywhere | 0/16 everywhere | 0/16 everywhere | 1/16 at 0.9 m/s push |
+
+- **Hind feet skim again** (measured at 0.12 m/s, inside the new speed range): 0.1-0.4 cm lift in 14b, 15a, 15c (front 2.1-2.5 cm). The swing_height cost is (height - arc)^2, so shrinking the lift 3.6 -> 2.5 cm halved the price of skimming. Fix for run 16: -450 -> -930 = x(3.6/2.5)^2.
+- **Can the short legs lift 3.6 cm?** The joints reach ~11 cm, but the gait gives the foot 0.12 s to rise: 2.5 cm needs ~34 deg of knee fold (avg 4.9 rad/s, already the servo's no-load speed), 3.6 cm needs 45 deg (6.5 rad/s, impossible). Getting 3.6 cm would need a slower stride, less time on the ground per foot (toward a trot), longer legs, or faster servos. Decision: keep 2.5 cm (= 15% of leg, the spec).
+- **Jumping, ruled out:** full-effort crouch-and-extend in sim leaves the ground 40 ms (~2 mm; flight height = g t^2 / 8). Without the servo speed limit: 218 ms (~6 cm). The servos are strong enough but too slow. Recorded in CLAUDE.md; climbing over objects (slow) added to Tier 3, walking over small bumps to Tier 2.
+- **Learned:**
+  - Run several one-change experiments in parallel from the same base: same cost, a third of the wall time, clean comparisons. Combine the winners next and re-check (interactions).
+  - A price that's squared in a length changes with the square of the body scale: rescale weights when the body changes.
+  - These servos are strong but slow: slow or held skills (rearing, careful climbing) fit; fast ones (jumping, quick high steps) don't.
+- **Tooling:** `tools/train_walk.py` now records where the time goes (`timing.json`: imports, env build, setup + first compile, each eval, each training chunk, throughput) and takes `--ppo key=value` and `--no_checkpoints` for speed experiments.
+- **Next:** run 16 = 15a + 15c + action_rate -0.15 (gentler than 15b) + swing_height -930, with profiling. Run 17: bumps (rough terrain).
+- **Cost so far:** ~$5.21.

@@ -11,8 +11,13 @@ Examples (run from the repo root):
   python tools/train_walk.py --env redpanda --name smoke --tiny
 
 Writes to runs/<name>/: progress.csv (one row per eval), config.json,
-params.pkl (the trained policy, ~1 MB), and orbax checkpoints.
+params.pkl (the trained policy, ~1 MB), orbax checkpoints, and timing.json
+(where the wall-clock time went: imports, env build, setup/compile, each
+training chunk, each evaluation, saving).
 """
+import time
+T0 = time.time()  # before the heavy imports, so their cost is measured too
+
 import argparse
 import csv
 import functools
@@ -61,7 +66,12 @@ p.add_argument("--tiny", action="store_true", help="tiny CPU run to test the scr
 p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                help="override one red panda env setting (repeatable), e.g. "
                     "reward_config.scales.swing_height=-600.0")
+p.add_argument("--ppo", action="append", default=[], metavar="KEY=VALUE",
+               help="override one PPO setting (repeatable), e.g. num_evals=3")
+p.add_argument("--no_checkpoints", action="store_true",
+               help="skip the ~85 MB orbax checkpoints (speed experiments)")
 args = p.parse_args()
+T_IMPORTS = time.time()
 
 out = REPO / "runs" / args.name
 out.mkdir(parents=True, exist_ok=True)
@@ -70,6 +80,12 @@ out.mkdir(parents=True, exist_ok=True)
 ppo_cfg = locomotion_params.brax_ppo_config(GO1)
 if args.timesteps:
   ppo_cfg.num_timesteps = args.timesteps
+for item in args.ppo:  # e.g. num_evals=3, num_envs=16384
+  key, value = item.split("=", 1)
+  if key not in ppo_cfg:
+    raise SystemExit(f"--ppo: no PPO setting named {key}")
+  ppo_cfg[key] = json.loads(value)
+  print(f"ppo override: {key} = {ppo_cfg[key]}")
 
 # Environment.
 if args.env == "go1":
@@ -108,6 +124,7 @@ if args.tiny:
   extra["num_eval_envs"] = 8
   env_cfg.naconmax = 64  # buffers sized for 8 robots, not 8192
 
+T_ENV = time.time()
 with open(out / "config.json", "w") as f:
   json.dump({"args": vars(args), "ppo": ppo_cfg.to_dict(), "env": env_cfg.to_dict()},
             f, indent=2, default=str)
@@ -117,8 +134,13 @@ start = time.time()
 rows = []
 
 
+evals = []  # (seconds since training started, eval seconds) per progress call
+
+
 def progress(step, metrics):
-  row = {"step": step, "minutes": round((time.time() - start) / 60, 2)}
+  now = time.time() - start
+  evals.append((now, float(metrics.get("eval/epoch_eval_time", 0.0)), int(step)))
+  row = {"step": step, "minutes": round(now / 60, 2)}
   row.update({k: float(v) for k, v in metrics.items() if k.startswith("eval/")})
   rows.append(row)
   with open(out / "progress.csv", "w", newline="") as f:
@@ -147,11 +169,43 @@ make_inference_fn, policy_params, _ = ppo.train(
     network_factory=network_factory,
     progress_fn=progress,
     seed=args.seed,
-    save_checkpoint_path=str(out / "checkpoints"),
+    save_checkpoint_path=None if args.no_checkpoints else str(out / "checkpoints"),
     **params,
     **extra,
 )
 
+T_TRAIN = time.time()
 with open(out / "params.pkl", "wb") as f:
   pickle.dump(jax.device_get(policy_params), f)
+T_END = time.time()
+
+# Where the time went. Brax runs one evaluation before training (step 0), then
+# alternates a training chunk and an evaluation; checkpoints save after each eval.
+# So: setup = time to the first progress call minus its eval; each chunk = gap
+# between progress calls minus that call's eval (includes the checkpoint save,
+# and the first chunk also includes compiling the training step).
+setup_s = evals[0][0] - evals[0][1] if evals else 0.0
+chunks = [(evals[i][2], evals[i][0] - evals[i - 1][0] - evals[i][1]) for i in range(1, len(evals))]
+timing = {
+    "imports_s": round(T_IMPORTS - T0, 1),
+    "env_build_s": round(T_ENV - T_IMPORTS, 1),
+    "setup_and_first_compile_s": round(setup_s, 1),
+    "eval_s": [round(e[1], 1) for e in evals],
+    "eval_total_s": round(sum(e[1] for e in evals), 1),
+    "train_chunk_s": [round(c[1], 1) for c in chunks],
+    "train_total_s": round(sum(c[1] for c in chunks), 1),
+    "first_chunk_extra_s": round(chunks[0][1] - np.median([c[1] for c in chunks[1:]]), 1) if len(chunks) > 2 else None,
+    "after_training_s": round(T_END - T_TRAIN + (T_TRAIN - start - (evals[-1][0] if evals else 0)), 1),
+    "total_s": round(T_END - T0, 1),
+    "steps": int(ppo_cfg.num_timesteps),
+    "train_steps_per_s": round(ppo_cfg.num_timesteps / max(sum(c[1] for c in chunks), 1e-9)),
+    "checkpoints": not args.no_checkpoints,
+    "ppo_overrides": args.ppo,
+}
+json.dump(timing, open(out / "timing.json", "w"), indent=2)
+print("\nwhere the time went (seconds):")
+for k in ["imports_s", "env_build_s", "setup_and_first_compile_s", "eval_total_s",
+          "train_total_s", "first_chunk_extra_s", "after_training_s", "total_s"]:
+  print(f"  {k:28s} {timing[k]}")
+print(f"  training throughput: {timing['train_steps_per_s']:,} steps/s")
 print(f"done in {(time.time() - start) / 60:.1f} min -> {out}")

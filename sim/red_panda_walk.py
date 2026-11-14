@@ -52,9 +52,12 @@ def default_config() -> config_dict.ConfigDict:
       # leg_scale shortens both leg segments (Pupper = 12.35 + 11.5 cm); the foot
       # ball keeps its size. stance_knee_deg > 0 rewrites the home pose: that knee
       # bend with each foot straight under its hip (0 = the XML's home, knee 80).
+      # Run 15 default = run 14b: legs x0.7 (8.64 + 8.05 cm), home knee 45 deg with feet
+      # under the hips (torso 16.3 cm, red panda height). Knee RMS current 108% -> 69%
+      # of rated vs run 13 (Pupper legs, knee ~93 deg crouch). CAD may adjust lengths.
       model_config=config_dict.create(
-          leg_scale=1.0,
-          stance_knee_deg=0.0,
+          leg_scale=0.7,
+          stance_knee_deg=45.0,
       ),
       # RED PANDA (run 10): domain randomization. Each training robot gets its own
       # world, so the policy can't rely on exact numbers. Used by tools/train_walk.py
@@ -132,7 +135,7 @@ def default_config() -> config_dict.ConfigDict:
           # touchdown offsets in FEET order (fl, fr, bl, br) = (LF, RF, LH, RH);
           # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70
           offsets=[0.20, 0.70, 0.00, 0.50],
-          base_height=0.19,                # torso target: the home stance (no tall spider legs)
+          base_height=0.163,  # torso target = the home stance (run 14b; was 0.19 for Pupper legs, knee 80)
           # Run 6: torso choreography. Lean (roll) a few degrees toward the side whose
           # feet are down (weight shift onto the supporting pair = the waddle), once per
           # stride, and carry the head end slightly low. No twist: a rigid torso can't
@@ -162,7 +165,11 @@ def default_config() -> config_dict.ConfigDict:
               # (heat ~ current^2), yet torque cost only -38 per episode vs +809 for
               # speed tracking. (Later found: half the knee load is jitter, not effort.)
               torques=-0.0105,
-              action_rate=-0.01,
+              # Run 16: x15 (was -0.01). Smoothness was nearly free (-1.9/episode vs +874
+              # tracking), so the policy twitched its targets ~3 deg every 20 ms (knee
+              # jitter, double touchdowns). Run 15b's -0.5 fixed that but drifted the
+              # footfall timing and stopped sideways steps; -0.15 is the gentler middle.
+              action_rate=-0.15,
               # RED PANDA: Go1 x7. Standing-matched would be x17 (-0.017), but under
               # early-training jitter our light legs make energy 2.4x Go1's share;
               # too high risks "stand still" early, so match that. If run 1 freezes,
@@ -191,9 +198,18 @@ def default_config() -> config_dict.ConfigDict:
               # Run 12: -300 -> -450. Under randomization the hind feet skimmed again at
               # -300 (run 10); -600 brought the lift back but bounced more and pushed the
               # knee peak to 2.31 N*m (run 11a). Rarer pushes need less push to lift.
-              swing_height=-450.0,
-              base_height=-20.0,   # (torso height - target)^2: no rising up on straight legs
+              # Run 16: -450 -> -930. The cost is (height - arc)^2, so shrinking the lift
+              # 3.6 -> 2.5 cm (run 14b legs) halved the price of skimming: x(3.6/2.5)^2.
+              # Hind feet lifted only 0.1-0.4 cm in runs 14b-15c.
+              swing_height=-930.0,
+              # Run 16: x25 (was -20). Run 14b sat 2 cm below its 16.3 cm target for -9 per
+              # episode; at -500 that's -200. Run 15c: 15.8 cm, front double touchdowns gone.
+              base_height=-500.0,  # (torso height - target)^2
               joint_acc=-2.5e-7,   # sum of leg joint acceleration^2: anti-jitter (legged_gym's value)
+              # Run 15a: planted feet under their thigh joints, (fore/aft^2 + sideways^2).
+              # 0 = off (set per experiment). Run 14b's gait would pay ~-250/episode at
+              # -30 (front feet 6.6 cm ahead in stance, hind 2.9 cm out); a centred gait ~-32.
+              foot_under_hip=-30.0,  # run 16 (run 15a: front feet +7.8 -> +4.1 cm, knee 62% of rated)
           ),
           # RED PANDA: two sigmas instead of Go1's one (0.25). Our walk speeds are
           # 4x slower than Go1's (error^2 16x smaller) -> 0.25/16; turn speeds are
@@ -205,9 +221,9 @@ def default_config() -> config_dict.ConfigDict:
           # quick for slow servos. (Go1-proportional would be 4.7: 84% of max lift.)
           # Run 5: spec says lift ~15-20% of leg length (24 cm) = 3.6-4.8 cm -> 3.6 cm
           # lift + 0.97 cm foot radius. (Runs 1-4 used 0.04.)
-          max_foot_height=0.046,
+          max_foot_height=0.035,  # run 14b: 2.5 cm lift + 0.97 cm foot radius (was 0.046)
           body_sway_sigma=0.0012,  # (2 deg)^2 in rad^2: being flat when asked for 3 deg scores 0.1
-          swing_lift=0.036,         # run 7: arc peak above resting (15% of leg, the spec's lift)
+          swing_lift=0.025,         # arc peak above resting: 15% of leg (run 14b: 16.7 cm legs; was 0.036)
           foot_rest_height=0.0097,  # foot-center height when planted (1 cm ball, sunk 0.3 mm)
           # RED PANDA (run 2): Go1 rewards air time above 0.1 s per step. Run 1's quick
           # steps (~0.19 s in the air) already beat that, so nothing pushed for longer
@@ -261,7 +277,9 @@ def default_config() -> config_dict.ConfigDict:
           # Run 5: speed = stride x strides/s. At 1.25 strides/s a moderate ~16 cm
           # stride gives 0.2 m/s (0.4 would need 32 cm; the legs max out ~20 cm).
           # Sideways 0.1: sidestepping doesn't suit a lateral-sequence walk. (Runs 1-4: 0.4, 0.2, 0.5.)
-          a=[0.2, 0.1, 0.5],
+          # Run 14b: x0.7 legs -> x0.7 forward/sideways (shorter strides); turning
+          # depends on the body width, which didn't change. (Runs 5-14a: 0.2, 0.1, 0.5.)
+          a=[0.14, 0.07, 0.5],
           # Probability of not zeroing out new command.
           b=[0.9, 0.25, 0.5],
       ),
@@ -443,6 +461,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
     self._imu_site_id = m.site("imu").id
 
     self._feet_site_id = np.array([m.site(f).id for f in FEET])
+    self._thigh_body_id = np.array([m.body(f"{leg}_upper").id for leg in LEGS])  # run 15a
     self._feet_floor_found_sensor = [
         m.sensor(f"{f}_floor_found").id for f in FEET
     ]
@@ -976,6 +995,14 @@ class RedPandaWalk(mjx_env.MjxEnv):
       terms["base_height"] = jp.square(data.qpos[2] - self._gait.base_height)
       terms["joint_acc"] = jp.sum(
           jp.square((leg_qvel - info["last_leg_qvel"]) / self.dt))
+      if "foot_under_hip" in rc.scales:  # run 15a
+        # Feet on the ground should sit under their thigh joints (where a straight leg
+        # hangs; the hip body itself is 3 cm further in), in the torso's frame:
+        # (fore/aft)^2 + (sideways)^2 per planted foot. A stride still needs about
+        # +/-3.4 cm of fore/aft travel at 0.12 m/s, so a good gait pays a little.
+        R = data.xmat[self._torso_body_id]
+        rel = (data.site_xpos[self._feet_site_id] - data.xpos[self._thigh_body_id]) @ R
+        terms["foot_under_hip"] = jp.sum(jp.where(contact, jp.sum(jp.square(rel[:, :2]), axis=1), 0.0))
     # only terms this run's config has a weight for (old runs replay unchanged)
     return {k: v for k, v in terms.items() if k in self._config.reward_config.scales}
 
