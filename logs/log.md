@@ -598,3 +598,12 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Ops:** one watcher per pod, and stop each pod as soon as its results are copied (a stalled copy left run 24's pods idle ~25 min, ~$0.75). Next: run the evals on the pod right after training (GPU is much faster for the 400-robot stress test).
 - **Cost so far:** ~$9.15.
 
+
+### Evals on the pod (commit 34fc79f)
+- **Did:** the standard checks now run on the pod right after training (`tools/eval/run_evals.sh`, called by `pod_run.sh`): lift, knee margin (`knee_margin.py`, moved out of the scratchpad), hardware, terrain, stress, GIF. `fetch_run.sh` copies a run's small results back; `pod_env.sh` holds the shared pod setup (venv + fast imports).
+- **Timings on the 4090:** lift 31 s, knee 62 s, hardware 38 s, terrain 42 s, stress 49 s, GIF 47 s: the whole suite in ~4.5 min (the stress test was the slow one on the Mac). `terrain_eval.py` went 226 -> 42 s by running every tile in one batch (`reset(rng, tile)` picks the tile per robot, so it compiles once instead of once per tile).
+- **EGL fix (GIF on a headless pod):** the pod image has NVIDIA's EGL driver but not the `libEGL.so.1` loader, so `pod_env.sh` installs `libegl1` (~7 s). `MUJOCO_GL=egl` is set only for the GIF step, because with it set, importing mujoco loads that GL library in every check.
+- **Measurement fix:** 24a trained with terrain on, so the standard checks were quietly running on random lumpy tiles. `rpw.use_flat()` now puts them on the flat floor (terrain has its own check), so runs compare fairly.
+- **24a on true flat** (`runs/rp_run24a/eval_flat/`): hind lift 2.2/2.2 cm (front 2.3/2.3), not the 1.5-1.7 measured on lumps; knee 74% of rated, peak 1.47 N*m (50% of stall); hind knees pinned < 1% of the time (0.4-1.7% with 10% weaker servos; front 4.8-8.8%); stress 0/16 everywhere except 1/16 at friction 0.2 floor-only and 1/16 at 0.9 m/s pushes.
+- **Learned:** when the training setup changes (terrain on), check that every eval still measures what it says it measures. The "hind lift 1.6 cm" headline was the lumps, not the gait.
+- **Ops:** two test pods had a broken public SSH port (sshd was up per the pod logs); a fresh pod worked. If SSH times out on a new pod, replace it rather than debug.
