@@ -73,6 +73,7 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Power | One 3S LiPo for servos; separate 5 V / 5 A regulator for the Pi; shared ground |
 | Bus | Legs, tail, and neck on the serial bus; ears on PWM |
 | Rough-model body | 32 × 10 × 5 cm, hips ±12 cm front/back of center; legs = Pupper ×0.7 (8.64 + 8.05 cm, run 14b), standing with knees bent 45° and feet under the hips (torso ~16 cm, red panda height). Final lengths depend on fitting the servos in CAD. Later sim test: Pupper's 27.6 cm body for rearing comparison |
+| Walking gait | Lateral-sequence walk (LH → LF → RH → RF), evenly spaced, each foot down 75% of a 1.0 s stride: always 3 feet down (no same-side 2-leg moments), steps ±4.5 cm at 0.12 m/s, hind lift ~1.5–1.8 cm (servo-limited), hard floor 1.2 cm (run 26) |
 | Rough-model mass | 1.8 kg nominal, a bit above the parts estimate (~1.64–1.74 kg, servos ≈ 55 g each × 18) so the torque checks have margin. Train with mass randomized ±10% (1.62–1.98 kg); report torques at 1.8 kg (go/no-go) and 1.98 kg (stress test) |
 | Neck | 3 servos: turn, then nod, then tilt (head tilt for personality). Like the tail while walking: animation-driven, randomized "looking around" during training (switchable), and the walking policy sees the neck angles and speeds |
 | Battery placement | Center of the torso for the rough model; front/back is a later sim experiment |

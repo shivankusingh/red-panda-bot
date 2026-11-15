@@ -139,19 +139,28 @@ def default_config() -> config_dict.ConfigDict:
       # touchdown offset. Lateral-sequence walk with lateral couplets: LH -> LF -> RH -> RF.
       gait_config=config_dict.create(
           enable=True,
-          freq_hz=1.25,                    # strides per second (spec: 1.0-1.6, never 3-4)
+          # Run 26: 1.25 -> 1.0 (longer steps: +/-4.5 cm at 0.12 m/s; knees stay >= 31 deg bent).
+          freq_hz=1.0,                     # strides per second (spec: 1.0-1.6, never 3-4)
           # Run 24a: 0.70 -> 0.60. More swing time (0.32 s) lets the hind feet physically
           # reach ~2.4 cm (leg-in-air test); at 0.70 the servos top out at ~1.6 cm.
-          duty=0.60,                       # each foot down 60% of the cycle
+          # Run 26: 0.60 -> 0.75 with even offsets: 3 feet down at every moment, so no
+          # front lift-off stands on a same-side pair (24a/25b propped a hind foot mid-swing
+          # at ~41% of body weight there). 0.25 s swings: servos lift a hind foot 1.5-1.8 cm.
+          duty=0.75,                       # each foot down 75% of the cycle
           # touchdown offsets in FEET order (fl, fr, bl, br) = (LF, RF, LH, RH);
-          # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70
-          offsets=[0.20, 0.70, 0.00, 0.50],
+          # spec: LH 0.00, LF 0.20, RH 0.50, RF 0.70 (runs 5-25). Run 26: evenly spaced, so
+          # duty 0.75 never leaves fewer than 3 feet down (tools/eval/schedule_table.py).
+          offsets=[0.25, 0.75, 0.00, 0.50],
           base_height=0.158,  # torso target = the home stance (run 20; 0.163 for runs 14b-19)
           # Run 6: torso choreography. Lean (roll) a few degrees toward the side whose
           # feet are down (weight shift onto the supporting pair = the waddle), once per
           # stride, and carry the head end slightly low. No twist: a rigid torso can't
           # yaw without turning (that would need the side-bend spine).
           roll_amp_deg=3.0,
+          # Run 26: phase where the lean target's sine crosses zero going left (lean left
+          # peaks a quarter stride later). 0.20 fits the offsets above (right feet in the
+          # air around 0.45); even offsets [0.25, 0.75, 0, 0.5] need 0.25 (peak at 0.5).
+          roll_phase=0.25,
           pitch_deg=2.0,                   # + = nose down (run 20: = the home pose's slant; was 3.0)
       ),
       reward_config=config_dict.create(
@@ -238,7 +247,14 @@ def default_config() -> config_dict.ConfigDict:
               # Run 23c: clearance floor, once per swing (see swing_floor_lift). 0 = off.
               # Run 24a default: sized so 20b's skimming hind feet pay what swing_height
               # charges them. With bumps and no knee term: hind 1.5-1.7 cm, knee 72% of rated.
-              swing_floor=-22000.0,
+              # Run 26: -330 with swing_floor_shape "linear" (0.3 cm short = 1.0 per swing).
+              swing_floor=-330.0,
+              # Run 25b: weight still on a foot around its scheduled lift-off (see
+              # unload_before_s / unload_after_s). 24a's front feet held ~50% of the body
+              # at lift-off and 37-41% 20 ms later, so the knee hit its torque limit and
+              # the foot left ~50-60 ms late (hind feet unload in time). 24a would pay
+              # ~37/episode before the weight (front 18.5 each, hind ~0). 0 = off.
+              unload=0.0,
           ),
           # RED PANDA: two sigmas instead of Go1's one (0.25). Our walk speeds are
           # 4x slower than Go1's (error^2 16x smaller) -> 0.25/16; turn speeds are
@@ -250,9 +266,9 @@ def default_config() -> config_dict.ConfigDict:
           # quick for slow servos. (Go1-proportional would be 4.7: 84% of max lift.)
           # Run 5: spec says lift ~15-20% of leg length (24 cm) = 3.6-4.8 cm -> 3.6 cm
           # lift + 0.97 cm foot radius. (Runs 1-4 used 0.04.)
-          max_foot_height=0.035,  # run 14b: 2.5 cm lift + 0.97 cm foot radius (was 0.046)
+          max_foot_height=0.0277,  # run 26: 1.8 cm lift + 0.97 cm foot radius (14b-25: 0.035)
           body_sway_sigma=0.0012,  # (2 deg)^2 in rad^2: being flat when asked for 3 deg scores 0.1
-          swing_lift=0.025,         # arc peak above resting: 15% of leg (run 14b: 16.7 cm legs; was 0.036)
+          swing_lift=0.018,         # arc peak above resting. Run 26: what the servos reach in a 0.25 s swing (14b-25: 0.025)
           # Run 18: swing target shape. "bell" = lift x sin^2: zero vertical speed at
           # touchdown, so following the arc IS a soft landing (the sine arc demanded
           # ~0.32 m/s and fought soft_landing; run 17's hind feet skimmed to escape).
@@ -269,7 +285,25 @@ def default_config() -> config_dict.ConfigDict:
           swing_knee_ref="home",
           swing_knee_fold_liftoff_deg=[40.0, 47.0],
           # Run 23c: every swing should peak at least this high above resting (0 cost above).
-          swing_floor_lift=0.015,
+          swing_floor_lift=0.012,   # run 26: below the servo max (1.5-1.8 cm) so it's reachable (23c-25: 0.015)
+          # Run 26: "squared" (runs 23c-25: (floor - peak)^2, so a small miss is nearly
+          # free; 25a's hind feet settled 0.5 cm under) or "linear" (floor - peak: the
+          # first mm under costs as much as any other; a hard floor). Linear -330: 0.3 cm
+          # short = 1.0 per swing, the price squared -22000 charged for 0.7 cm.
+          swing_floor_shape="linear",
+          # Run 26: where a planted foot "should" be fore/aft for foot_under_hip.
+          # "hip" (runs 15a-25): under its thigh joint, so every step's travel costs and
+          # long steps cost more. "clock": where the gait clock puts it, sliding from
+          # +travel/2 at touchdown to -travel/2 at lift-off (travel = commanded forward
+          # speed x stance time). Long centred steps are free; a stride shifted forward
+          # (run 14b's front feet landing 7.8 cm ahead) still costs. Sideways: same.
+          foot_under_hip_ref="clock",
+          # Run 25b: unload window by the gait clock. The price ramps 0 -> 1 over the last
+          # unload_before_s of stance, then stays 1 for the first unload_after_s of swing
+          # (a foot that waits keeps paying; the rest of swing is free, so early hard
+          # landings stay soft_landing's job).
+          unload_before_s=0.06,
+          unload_after_s=0.10,
           foot_rest_height=0.0097,  # foot-center height when planted (1 cm ball, sunk 0.3 mm)
           # RED PANDA (run 2): Go1 rewards air time above 0.1 s per step. Run 1's quick
           # steps (~0.19 s in the air) already beat that, so nothing pushed for longer
@@ -642,6 +676,11 @@ class RedPandaWalk(mjx_env.MjxEnv):
           list(range(sensor_adr, sensor_adr + sensor_dim))
       )
     self._foot_linvel_sensor_adr = jp.array(foot_linvel_sensor_adr)
+    # Run 25b: floor push on each foot (rewards only). Each sensor holds 4 contact points
+    # x (normal, tangent1, tangent2) in N; [4 feet, 4 points] addresses of the normal push.
+    self._foot_force_adr = jp.array([
+        m.sensor_adr[m.sensor(f"{f}_floor_force").id] + 3 * np.arange(4) for f in FEET])
+    self._weight = float(self._torso_mass * 9.81)  # nominal, N (torso = root: whole robot)
 
     self._cmd_a = jp.array(self._config.command_config.a)
     self._cmd_b = jp.array(self._config.command_config.b)
@@ -778,7 +817,7 @@ class RedPandaWalk(mjx_env.MjxEnv):
     Only the left feet are down around phase 0.45 -> lean left (left side down, roll < 0);
     only the right feet around 0.95 -> lean right. Standing still -> no sway."""
     g = self._gait
-    sway = jp.sin(2 * jp.pi * (phase - 0.2))  # +1 at 0.45 (left pair down), -1 at 0.95
+    sway = jp.sin(2 * jp.pi * (phase - g.get("roll_phase", 0.2)))  # default: +1 at 0.45 (left pair down), -1 at 0.95
     walking = jp.linalg.norm(command) >= 0.01
     roll = -jp.deg2rad(g.get("roll_amp_deg", 0.0)) * sway * walking
     pitch = jp.deg2rad(g.get("pitch_deg", 0.0))
@@ -1285,7 +1324,25 @@ class RedPandaWalk(mjx_env.MjxEnv):
         walking = jp.linalg.norm(info["command"]) >= 0.01
         lift = info["swing_end_peak"] - rc.foot_rest_height
         short = jp.maximum(rc.swing_floor_lift - lift, 0.0)
-        terms["swing_floor"] = jp.sum(jp.where(info["swing_end"], jp.square(short), 0.0)) * walking
+        if rc.get("swing_floor_shape", "squared") == "linear":  # run 26: a hard floor
+          miss = short
+        else:
+          miss = jp.square(short)
+        terms["swing_floor"] = jp.sum(jp.where(info["swing_end"], miss, 0.0)) * walking
+      if "unload" in rc.scales:  # run 25b (0 = off; still logged)
+        # Sum over feet of w x (floor push / body weight)^2. w follows the gait clock:
+        # 0 most of stance, ramps to 1 over the last unload_before_s, 1 for the first
+        # unload_after_s of swing, 0 after. Lifting late doesn't help: the clock doesn't wait.
+        walking = jp.linalg.norm(info["command"]) >= 0.01
+        period = 1.0 / self._gait.freq_hz
+        prog = jp.mod(info["gait_phase"] - self._gait_offsets, 1.0)  # 0..1 since touchdown
+        to_lift = (self._gait.duty - prog) * period  # s until lift-off (stance)
+        since_lift = (prog - self._gait.duty) * period  # s since lift-off (swing)
+        w = jp.where(prog < self._gait.duty,
+                     jp.clip(1.0 - to_lift / rc.unload_before_s, 0.0, 1.0),
+                     (since_lift < rc.unload_after_s).astype(jp.float32))
+        push = jp.sum(data.sensordata[self._foot_force_adr], axis=1) / self._weight
+        terms["unload"] = jp.sum(w * jp.square(push)) * walking
       terms["base_height"] = jp.square(self._torso_height(data) - self._gait.base_height)
       terms["joint_acc"] = jp.sum(
           jp.square((leg_qvel - info["last_leg_qvel"]) / self.dt))
@@ -1305,6 +1362,16 @@ class RedPandaWalk(mjx_env.MjxEnv):
         # +/-3.4 cm of fore/aft travel at 0.12 m/s, so a good gait pays a little.
         R = data.xmat[self._torso_body_id]
         rel = (data.site_xpos[self._feet_site_id] - data.xpos[self._thigh_body_id]) @ R
+        if rc.get("foot_under_hip_ref", "hip") == "clock":  # run 26: long centred steps are free
+          prog = jp.mod(info["gait_phase"] - self._gait_offsets, 1.0)  # 0..1 since touchdown
+          # A foot down while scheduled in the air is judged against the nearer end of its
+          # stance (early landing -> touchdown spot, late lift-off -> lift-off spot):
+          # timing is gait_schedule's job, this term only judges position.
+          duty = self._gait.duty
+          prog = jp.where(prog > (1.0 + duty) / 2, prog - 1.0, prog)
+          travel = info["command"][0] * duty / self._gait.freq_hz
+          expected_x = travel * jp.clip(0.5 - prog / duty, -0.5, 0.5)  # +travel/2 -> -travel/2
+          rel = rel.at[:, 0].add(-expected_x)
         terms["foot_under_hip"] = jp.sum(jp.where(contact, jp.sum(jp.square(rel[:, :2]), axis=1), 0.0))
     # only terms this run's config has a weight for (old runs replay unchanged)
     return {k: v for k, v in terms.items() if k in self._config.reward_config.scales}

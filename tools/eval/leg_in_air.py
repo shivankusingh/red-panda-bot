@@ -23,7 +23,8 @@ def ik(leg, tgt_rel, q0):
         J = jacp[[0, 2]][:, [hd, kd]]
         q = q + np.linalg.solve(J.T @ J + 1e-6 * np.eye(2), J.T @ err[[0, 2]])
     return q
-def trial(leg, swing_t):
+def trial(leg, swing_t, stride=STRIDE):
+    """(peak lift cm, landing speed m/s, knee fold deg) for one swing of swing_t s moving the foot stride m forward."""
     hq, kq = m.jnt_qposadr[m.joint(f"{leg}_hip").id], m.jnt_qposadr[m.joint(f"{leg}_knee").id]
     hd, kd = m.jnt_dofadr[m.joint(f"{leg}_hip").id], m.jnt_dofadr[m.joint(f"{leg}_knee").id]
     ah, ak = m.actuator(f"{leg}_hip").id, m.actuator(f"{leg}_knee").id
@@ -33,8 +34,8 @@ def trial(leg, swing_t):
     q = q0.copy()
     for i in range(n + 1):
         s = i / n
-        q = ik(leg, np.array([STRIDE * (s - 0.5), 0, LIFT * np.sin(np.pi * s) ** 2]), q); path.append(q.copy())
-    start = ik(leg, np.array([-STRIDE / 2, 0, 0]), q0)
+        q = ik(leg, np.array([stride * (s - 0.5), 0, LIFT * np.sin(np.pi * s) ** 2]), q); path.append(q.copy())
+    start = ik(leg, np.array([-stride / 2, 0, 0]), q0)
     mujoco.mj_resetData(m, d); d.qpos[:] = home; d.qpos[hq], d.qpos[kq] = start; d.ctrl[:] = m.key_ctrl[0]
     mujoco.mj_forward(m, d); z0 = d.site_xpos[site][2]; zs, vzs = [], []
     kp = m.actuator_gainprm[ah, 0]; stall = 2.9; w0 = 4.7
@@ -52,8 +53,9 @@ def trial(leg, swing_t):
     td = np.argmax(np.arange(len(zs)) > n * 0.5) + np.argmax(zs[int(n * 0.5):] < 0.002)  # first return near start height
     kneespan = np.degrees(max(abs(p[1] - path[0][1]) for p in path))
     return 100 * zs.max(), -vz[max(td - 5, 0)], kneespan
-print(f"{'leg':4s} {'swing':>6s} {'asked peak':>11s} {'got peak':>9s} {'knee fold':>10s} {'foot speed 20 ms before return':>31s}")
-for leg, name in [("fl", "LF"), ("bl", "LH")]:
-    for T in [0.24, 0.32]:
-        peak, vland, kf = trial(leg, T)
-        print(f"{name:4s} {T:5.2f}s {100*LIFT:9.1f}cm {peak:7.1f}cm {kf:8.0f} deg {vland:24.2f} m/s")
+if __name__ == "__main__":
+    print(f"{'leg':4s} {'swing':>6s} {'asked peak':>11s} {'got peak':>9s} {'knee fold':>10s} {'foot speed 20 ms before return':>31s}")
+    for leg, name in [("fl", "LF"), ("bl", "LH")]:
+        for T in [0.24, 0.32]:
+            peak, vland, kf = trial(leg, T)
+            print(f"{name:4s} {T:5.2f}s {100*LIFT:9.1f}cm {peak:7.1f}cm {kf:8.0f} deg {vland:24.2f} m/s")

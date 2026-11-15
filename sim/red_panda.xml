@@ -177,6 +177,13 @@
     <framelinvel objtype="site" objname="fr_foot" name="fr_foot_global_linvel"/>
     <framelinvel objtype="site" objname="bl_foot" name="bl_foot_global_linvel"/>
     <framelinvel objtype="site" objname="br_foot" name="br_foot_global_linvel"/>
+    <!-- feet: contact force from the floor, for rewards only (the real robot can't measure it).
+         Up to 4 contact points (lumps can touch a foot in several places); per point 3 numbers
+         in the contact's own frame, the first is the push along the contact normal (N). -->
+    <contact     name="fl_foot_floor_force" geom1="fl_foot" geom2="floor" reduce="mindist" num="4" data="force"/>
+    <contact     name="fr_foot_floor_force" geom1="fr_foot" geom2="floor" reduce="mindist" num="4" data="force"/>
+    <contact     name="bl_foot_floor_force" geom1="bl_foot" geom2="floor" reduce="mindist" num="4" data="force"/>
+    <contact     name="br_foot_floor_force" geom1="br_foot" geom2="floor" reduce="mindist" num="4" data="force"/>
   </sensor>
 
   <keyframe>
