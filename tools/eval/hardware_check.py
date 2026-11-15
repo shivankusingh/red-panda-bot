@@ -27,7 +27,7 @@ N, STEPS = 16, 1000  # 16 robots x 20 s, the env's own random commands (incl. st
 
 
 def make_env(volts):
-  c = config_dict.ConfigDict(cfg["env"]); c.impl = "jax"
+  c = config_dict.ConfigDict(cfg["env"]); c.impl = "jax"; r.use_flat(c)
   c.pert_config.enable = False
   c.servo_config.delay_ms = [0.0, 0.0]
   c.servo_config.no_load_speed = W0 * volts / 12.0     # motor speed ~ voltage

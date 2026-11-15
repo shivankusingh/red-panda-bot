@@ -10,8 +10,9 @@ sys.path.insert(0, str(REPO / "sim"))
 import red_panda_walk as rpw
 run = REPO / "runs" / sys.argv[1]; cfg = json.load(open(run / "config.json"))
 c = config_dict.ConfigDict(cfg["env"]); c.impl = "jax"; c.pert_config.enable = False
-LEVEL = int(sys.argv[3]) if len(sys.argv) > 3 else -1  # terrain row to walk on (-1 = the run's own floor)
+LEVEL = int(sys.argv[3]) if len(sys.argv) > 3 else -1  # terrain row to walk on (-1 = flat)
 if LEVEL >= 0: rpw.use_terrain(c, LEVEL)
+else: rpw.use_flat(c)
 if "servo_config" in c: c.servo_config.delay_ms = [0.0, 0.0]
 env = rpw.RedPandaWalk(config=c)
 net = cfg["ppo"]["network_factory"]

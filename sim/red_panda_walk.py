@@ -481,6 +481,16 @@ def _robot_spec(config) -> mujoco.MjSpec:
   return spec
 
 
+def use_flat(config) -> None:
+  """Evals: walk on the flat floor even if the run trained on terrain.
+
+  Standard checks (lift, knee margin, hardware, stress, GIF) run on flat so runs
+  compare fairly; terrain gets its own checks (terrain_eval.py, --terrain).
+  """
+  if "terrain_config" in config:
+    config.terrain_config.enable = False
+
+
 def use_terrain(config, level: int, col: int = 1) -> None:
   """Evals: put any run's config (even one from before terrain existed) on one tile.
 
@@ -782,7 +792,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
     standing = jp.linalg.norm(command) < 0.01
     return jp.where(standing, True, in_stance)
 
-  def reset(self, rng: jax.Array) -> mjx_env.State:
+  def reset(self, rng: jax.Array, tile: Optional[jax.Array] = None) -> mjx_env.State:
+    """tile: optional [level, col] to start on (evals; overrides terrain_config's spawn)."""
     qpos = self._init_q
     qvel = jp.zeros(self.mjx_model.nv)
 
@@ -805,6 +816,8 @@ class RedPandaWalk(mjx_env.MjxEnv):
         level = jp.array(tc.spawn_level)
       if tc.get("spawn_col", -1) >= 0:
         col = jp.array(tc.spawn_col)
+      if tile is not None:  # evals: one batch can cover several tiles (one compile)
+        level, col = tile[0], tile[1]
       cx, cy = terrain.tile_center(tc, level, col)
       qpos = qpos.at[0:2].add(jp.array([cx, cy]))
       # Raise the robot by the tallest ground under its footprint (1 cm grid over

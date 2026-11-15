@@ -34,13 +34,19 @@ cfg = json.load(open(run / "config.json"))
 params = pickle.load(open(run / "params.pkl", "rb"))
 
 
-def evaluate(level, col):
+tc = rpw.default_config().terrain_config
+TILES = [(0, tc.flat_cols[0])] + [(r, 1) for r in ROWS]   # flat first, then lumpy rows
+N = S * len(TILES)                                         # all tiles in one batch: one compile
+
+
+def evaluate():
+  """Walks S robots on each tile, all at once. Returns one log per tile."""
   c = config_dict.ConfigDict(cfg["env"])
   c.impl = "jax"
   c.pert_config.enable = False
   if "servo_config" in c:
     c.servo_config.delay_ms = [0.0, 0.0]
-  rpw.use_terrain(c, level, col)
+  rpw.use_terrain(c, 0, 1)  # terrain on; each robot's tile is passed to reset below
   env = rpw.RedPandaWalk(config=c)
   net = cfg["ppo"]["network_factory"]
   nets = ppo_networks.make_ppo_networks(
@@ -49,64 +55,58 @@ def evaluate(level, col):
       policy_hidden_layer_sizes=tuple(net["policy_hidden_layer_sizes"]),
       value_hidden_layer_sizes=tuple(net["value_hidden_layer_sizes"]),
       policy_obs_key=net["policy_obs_key"], value_obs_key=net["value_obs_key"])
-  policy = jax.jit(jax.vmap(ppo_networks.make_inference_fn(nets)(params, deterministic=True)))
-  reset, step = jax.jit(jax.vmap(env.reset)), jax.jit(jax.vmap(env.step))
+  policy = jax.vmap(ppo_networks.make_inference_fn(nets)(params, deterministic=True))
+  tiles = jp.array([t for t in TILES for _ in range(S)])   # (N, 2): robot i's [level, col]
 
+  # The whole 20 s walk runs on the device in one lax.scan (run 25: the old per-step
+  # Python loop pulled data off the GPU every step and was CPU-bound: 226 s on a pod).
   @jax.jit
-  def measure(state):
-    desired = jax.vmap(env._desired_contact)(state.info["gait_phase"], state.info["command"])
-    touching = state.info["last_contact"]
-    vx = jax.vmap(env.get_local_linvel)(state.data)[:, 0]
-    return (~desired) & touching, ~desired, vx, jax.vmap(env._feet_height)(state.data)
+  def rollout(rng, key):
+    state = jax.vmap(env.reset)(jax.random.split(rng, N), tiles)
 
-  state = reset(jax.random.split(jax.random.PRNGKey(0), S))
-  key = jax.random.PRNGKey(1)
-  fell = np.zeros(S, bool)
-  catch, up = np.zeros((S, 4)), np.zeros((S, 4))
-  speed, n_speed = 0.0, 0
-  peak = [[] for _ in range(4)]
-  cur_peak = np.zeros((S, 4))
-  for t in range(STEPS):
-    state.info["command"] = jp.tile(jp.array([VX, 0.0, 0.0]), (S, 1))
-    state.info["steps_until_next_cmd"] = jp.full((S,), 1000, dtype=jp.int32)
-    key, k = jax.random.split(key)
-    a, _ = policy(state.obs, jax.random.split(k, S))
-    state = step(state, a)
-    fell |= np.array(state.done) > 0
-    if t < 100:  # skip the first 2 s (settling from the spawn drop)
-      continue
-    c_, u_, vx, fh = (np.array(x) for x in measure(state))
-    ok = ~fell
-    catch[ok] += c_[ok]
-    up[ok] += u_[ok]
-    speed += vx[ok].sum()
-    n_speed += ok.sum()
-    # swing peak height above the ground, per completed swing
-    for f in range(4):
-      for i in np.where(ok)[0]:
-        if u_[i, f]:
-          cur_peak[i, f] = max(cur_peak[i, f], fh[i, f])
-        elif cur_peak[i, f] > 0:
-          peak[f].append(cur_peak[i, f])
-          cur_peak[i, f] = 0.0
-  rate = catch.sum(0) / np.maximum(up.sum(0), 1)
-  lift = [(np.median(p) - env._config.reward_config.foot_rest_height) * 100 if p else np.nan
-          for p in peak]
-  return fell.sum(), speed / max(n_speed, 1), rate, lift
+    def one_step(carry, _):
+      state, key = carry
+      state.info["command"] = jp.tile(jp.array([VX, 0.0, 0.0]), (N, 1))
+      state.info["steps_until_next_cmd"] = jp.full((N,), 1000, dtype=jp.int32)
+      key, k = jax.random.split(key)
+      a, _ = policy(state.obs, jax.random.split(k, N))
+      state = jax.vmap(env.step)(state, a)
+      up = ~jax.vmap(env._desired_contact)(state.info["gait_phase"], state.info["command"])
+      out = dict(done=state.done > 0, up=up, catch=up & state.info["last_contact"],
+                 vx=jax.vmap(env.get_local_linvel)(state.data)[:, 0],
+                 swing_end=state.info["swing_end"], swing_peak=state.info["swing_end_peak"])
+      return (state, key), out
+    return jax.lax.scan(one_step, (state, key), None, length=STEPS)[1]
+
+  log = {k: np.array(v) for k, v in rollout(jax.random.PRNGKey(0), jax.random.PRNGKey(1)).items()}
+  rest = env._config.reward_config.foot_rest_height
+  results = []
+  for i in range(len(TILES)):
+    lg = {k: v[:, i * S:(i + 1) * S] for k, v in log.items()}   # this tile's robots
+    fell_by = np.maximum.accumulate(lg["done"], axis=0)        # (T, S): fell at or before t
+    ok = ~fell_by[100:]                                         # skip 2 s settling; drop fallen
+    catch = (lg["catch"][100:] & ok[..., None]).sum((0, 1))
+    up = (lg["up"][100:] & ok[..., None]).sum((0, 1))
+    speed = lg["vx"][100:][ok].mean() if ok.any() else 0.0
+    # swing peak above the ground, per completed swing (by the gait clock, like swing_floor)
+    ended = lg["swing_end"][100:] & ok[..., None]
+    peaks = lg["swing_peak"][100:]
+    lift = [(np.median(peaks[..., f][ended[..., f]]) - rest) * 100 if ended[..., f].any() else np.nan
+            for f in range(4)]
+    results.append((fell_by[-1].sum(), speed, catch / np.maximum(up, 1), lift))
+  return results
 
 
 t0 = time.time()
-tc = rpw.default_config().terrain_config
 print(f"{RUN}: {S} robots x 20 s per row, forward {VX} m/s, nominal robot (no pushes / delay)")
 print("toe catch = % of 'should be in the air' time that the foot is touching; "
       "lift = median swing peak above the ground under the foot\n")
 print(f"{'tile':24s} {'fell':>7s} {'speed':>7s} | {'toe catch % LF  RF  LH  RH':>27s} | lift cm  LF   RF   LH   RH")
-for level, col in [(0, tc.flat_cols[0])] + [(r, 1) for r in ROWS]:
+for (level, col), (f, sp, rate, lift) in zip(TILES, evaluate()):
   if col in tc.flat_cols:
     name = "flat"
   else:
     name = f"row {level} (lumps <= {tc.max_height * (level + 1) / tc.n_levels * 100:.2f} cm)"
-  f, sp, rate, lift = evaluate(level, col)
   print(f"{name:24s} {f:>3d}/{S:<3d} {sp:>6.3f} | {'':6s}" + " ".join(f"{x * 100:4.0f}" for x in rate)
         + " | " + " ".join(f"{x:4.1f}" for x in lift), flush=True)
 print(f"\n({time.time() - t0:.0f} s)")

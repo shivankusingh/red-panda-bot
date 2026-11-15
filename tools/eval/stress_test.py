@@ -28,6 +28,7 @@ S = int(sys.argv[2]) if len(sys.argv) > 2 else 8
 cfg = json.load(open(run / "config.json"))
 env_cfg = config_dict.ConfigDict(cfg["env"])
 env_cfg.impl = "jax"
+red_panda_walk.use_flat(env_cfg)  # standard checks on flat (terrain: terrain_eval.py)
 env_cfg.pert_config.enable = True  # pushes on; size set per robot below (0 = no push)
 if "servo_config" in env_cfg:  # delay is added per condition below, not sampled
   env_cfg.servo_config.delay_ms = [0.0, 0.0]

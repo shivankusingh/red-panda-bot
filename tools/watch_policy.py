@@ -51,7 +51,7 @@ p.add_argument("--vx", type=float, default=0.12,
                help="fixed forward command for the GIF (inside every run's range since run 14b)")
 p.add_argument("--seconds", type=float, default=10.0, help="length of the fixed-command walk")
 p.add_argument("--terrain", type=int, default=-1,
-               help="walk on this terrain row (0-9, lumps up to 0.15-1.5 cm); -1 = the run's own floor")
+               help="walk on this terrain row (0-9, lumps up to 0.15-1.5 cm); -1 = flat")
 args = p.parse_args()
 run = REPO / "runs" / args.run
 cfg = json.load(open(run / "config.json"))
@@ -67,6 +67,8 @@ if "servo_config" in env_cfg:
 SUFFIX = f"_terrain{args.terrain}" if args.terrain >= 0 else ""  # don't overwrite the flat results
 if args.terrain >= 0:
   red_panda_walk.use_terrain(env_cfg, args.terrain)
+else:
+  red_panda_walk.use_flat(env_cfg)  # standard view: flat, so runs compare fairly
 env = red_panda_walk.RedPandaWalk(config=env_cfg)
 
 # Rebuild the network shape, then load the trained weights into it.
