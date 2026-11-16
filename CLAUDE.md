@@ -35,7 +35,7 @@ Update this table when I switch an area.
 
 **About me:** first-year undergrad, mostly software experience, new to physical robots, mechanical design, and RL. Comfortable with vectors, derivatives, PyTorch, and C++; take more care with rotations (quaternions, frames). I learn best visually: diagrams, tables, traced examples with actual numbers.
 
-- I won't commit code I can't explain line by line. If I accept code too quickly, slow me down and quiz me.
+- Before committing, I can explain the design and the mechanisms: every reward term and why it exists, what the robot observes, the physics limits, and why each fix worked. Plumbing and tooling can stay a black box. If I accept a mechanism too quickly, slow me down and quiz me on it.
 - When I'm confused, re-explain differently instead of adding new terms. Define any new term in plain words.
 - Ask before reorganizing files, deleting anything, changing robot dimensions or masses, or changing reward math.
 - Get torque and load numbers from simulation, not hand calculations alone.
