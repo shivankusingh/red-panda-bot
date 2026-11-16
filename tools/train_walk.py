@@ -130,6 +130,10 @@ else:
     # the per-robot deadline curriculum would restart at 2 s every ~250 steps.
     # Robots still start from varied walking states (each keeps its own bank pick).
     ppo_cfg.num_resets_per_eval = 0
+    # Rearing pays off 1-2 s after the effort; Go1's 0.97 looks ~0.67 s ahead (rr_run7a: 0.99
+    # took the median from 4.1 to 0.87 s). Unless set with --ppo.
+    if not any(item.startswith("discounting=") for item in args.ppo):
+      ppo_cfg.discounting = 0.99
   if env_cfg.terrain_config.enable:
     # Terrain: a foot on a lump touches it at up to ~3 points (measured 11-12 contacts
     # per robot standing on the hardest level) vs 1 on the flat plane. Too-small

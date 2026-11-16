@@ -39,7 +39,11 @@ def default_config() -> config_dict.ConfigDict:
   c.episode_length = 300  # 6 s: rear up, then hold
   c.terrain_config.enable = False  # flat floor first
   c.gait_config.enable = False     # no stride clock (and no clock input)
-  c.pert_config.enable = False     # v1: no pushes
+  # Defaults = the rr_run11 recipe (the rearing policy we keep). Pushes in training (rr_run9b+):
+  # walking's random torso shoves, up to 0.5 m/s, every 1-6 s; they need the roll guard.
+  c.pert_config.enable = True
+  c.pert_config.velocity_kick = [0.0, 1.5708]  # pi x 0.5 m/s (the shove profile is a half sine)
+  c.pert_config.kick_wait_times = [1.0, 6.0]
   c.naconmax = 16 * 8192           # tail + torso contacts on top of the feet
   c.njmax = 80
   c.rear_config = config_dict.create(
@@ -51,11 +55,11 @@ def default_config() -> config_dict.ConfigDict:
       # that arrives and stays up -> one rung lower next time (harder); a fall or no
       # arrival -> one rung higher. Past the last rung it starts from its walking state.
       ladder="data/rear_ladder.npz",
-      ladder_fraction=0.0,  # 0 = off
+      ladder_fraction=1.0,  # 0 = off. 25% failed (rr_run4a2: the standing habit won); 100% worked
       # Replay (rr_run6b): this share of a ladder robot's episodes starts at a random
       # rung it has already passed (0 .. its rung - 1) instead of its own rung, so
       # earlier rungs aren't forgotten (rr_run5b lost 40-50 deg). Replays don't move it.
-      ladder_replay=0.0,
+      ladder_replay=0.5,    # 0 = off. Without it rr_run6a forgot the upper rungs
       # Tripod pose (option A, 70 deg / hips 16 cm), from tripod_static.pose: joint angles
       # in degrees for the joints that move a lot. Each one's action range is centred
       # halfway between home and here and stretched to reach both, plus action_scale
@@ -78,7 +82,8 @@ def default_config() -> config_dict.ConfigDict:
       # starts at deadline_start; each episode on time and still standing -> deadline_step
       # tighter; fell or never arrived -> deadline_step looser; never below deadline_final.
       # Physics floor (stick model, 65% stall cap): 0.44 s at 1.8 kg, 0.47 s at 1.98 kg.
-      deadline_start=2.0,
+      deadline_start=1.3,     # rr_run11 (warm start from rr_run10b): just above its slowest arrival.
+                              # From scratch start near what the policy does (rr_run7b used 4.0).
       deadline_final=0.8,     # later try 0.6
       deadline_step=0.1,
       # rr_run7b: scale each episode's deadline by how far its start is from the tripod:
@@ -86,7 +91,7 @@ def default_config() -> config_dict.ConfigDict:
       # 70 deg ladder start and a walking start are judged fairly and the curriculum moves
       # one number (the full budget, rear_config.deadline) for all of them. Start it near
       # what the policy already does (rr_run6b: median 4.1 s from walking starts).
-      deadline_by_distance=False,
+      deadline_by_distance=True,
   )
   c.reward_config = config_dict.create(
       scales=config_dict.create(
@@ -119,11 +124,11 @@ def default_config() -> config_dict.ConfigDict:
           roll_rate=-0.05,     # walking's ang_vel_xy without pitch (rearing must pitch)
           # Symmetry (rr_run8a, user): rr_run7a held the tripod crooked: tail bent 20 deg to the
           # right (wag +27, wag2 +15 deg), left hind leg splayed 16 deg wider, right hind hip
-          # working 21% harder. Off here; rr_run8a: tail_straight -2, leg_symmetry -5 (costs: negative).
-          tail_straight=0.0,   # wag^2 + wag2^2 (rad): the tail's two sideways joints at 0
-          leg_symmetry=0.0,    # (left hind hip_side - right hind hip_side)^2 (rad; + = outward on both)
-          roll=0.0,            # rr_run9a: roll^2 (rad); straight tail + legs moved the lean into the
-                               # body (rr_run8a roll 4.1 deg, up to 9). Off here; rr_run9a: -20.
+          # working 21% harder (rr_run8a fixed it; costs, so negative).
+          tail_straight=-2.0,  # wag^2 + wag2^2 (rad): the tail's two sideways joints at 0
+          leg_symmetry=-5.0,   # (left hind hip_side - right hind hip_side)^2 (rad; + = outward on both)
+          roll=-20.0,          # rr_run9a: roll^2 (rad); straight tail + legs moved the lean into the
+                               # body (rr_run8a roll 4.1 deg, up to 9). Pushes without it: 22 deg (rr_run9b).
       ),
       target_pitch_deg=70.0,
       tilt_sigmas_deg=[35.0, 8.0],

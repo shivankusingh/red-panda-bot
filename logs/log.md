@@ -738,3 +738,23 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - rr10b is the best-behaved rearing policy so far; rr10a is the one that practised being shoved.
 - **Next:** rr11 = rr10b + pushes in training (both together). Then the next Tier 1 piece: coming back down from the tripod.
 - **Cost:** ~$0.53. Running total ~$13.55.
+
+### Rearing run rr11: the rearing policy to keep
+- **Did:** warm start from rr10b + pushes in training (both changes together). Full deadline budget 1.3 s -> 0.8 s (started just above rr10b's slowest arrival).
+
+  | | rr10b | **rr11** |
+  |---|---|---|
+  | From walking starts: reached / falls | 64 / 0 | **64 / 0** |
+  | Median / within 0.8 s | 0.98 s / 3 | **0.90 s / 8** (fastest 0.76) |
+  | Roll | +0.2 deg | **-0.3 deg (all robots within +/-3)** |
+  | Hind foot load left / right | 8.0 / 8.0 N | 7.8 / 7.6 N |
+  | Tail tip sideways | 1.0 cm | **0.1 cm** |
+  | Hind hip average / peaks (% of stall) | 0.58 N*m / 67, 66% | 0.67 N*m / **69, 67%** (inside the 60-70% band) |
+  | Hips (target 16) | 15.8 cm | 15.0 cm |
+  | Stress (20 conditions) | all pass | **all 16/16 reached, 0 falls**; friction 0.2: 12/16 still in the tripod at 6 s (slid out, no fall) |
+
+- **Sim go/no-go for rearing (rough model):** >= 90% with servo limits + randomization: yes (64/64; 320/320 in the stress test). Torques: average 0.67 N*m (rated 0.98), peaks 67-69% of stall: pass. Speed: median 0.90 s vs the ~0.45 s physics limit.
+- **Did also:** rr11's settings are now the env defaults (ladder 100% + 50% replay, fair deadline, symmetry + roll terms, pushes) and `train_walk.py --env rear` uses discount 0.99 unless `--ppo` sets it. Roadmap: rearing ticked.
+- **Ops:** the copy-back watcher missed some logs once (scp hiccup); fetched them by hand before stopping the pod.
+- **Next:** coming back down from the tripod onto four feet (Tier 1: rear up, hold, come back down).
+- **Cost:** ~$0.44. Running total ~$14.00.
