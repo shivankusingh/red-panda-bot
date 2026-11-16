@@ -408,7 +408,57 @@ def build_spec(config) -> mujoco.MjSpec:
   tc = config.get("terrain_config", None)
   if tc is not None and tc.enable:
     add_terrain(spec, tc)
+  if config.get("solid_body", False):
+    make_body_solid(spec)
   return spec
+
+
+SOLID_BODIES = ["head", "neck_1", "neck_2"] + [
+    f"{leg}_{part}" for leg in ["fl", "fr", "bl", "br"] for part in ["hip", "upper", "lower"]]
+
+
+def make_body_solid(spec: mujoco.MjSpec) -> list:
+  """Head, neck, hip blocks, thighs and shins collide with the floor (not with each other).
+
+  The base model only lets the foot balls, torso and tail touch the floor; everything else
+  passed through it, so a face-plant sank the head into the floor for free (rr_dn1 era).
+  Floor contype 1 + conaffinity 1 here = touches the floor only (all robot geoms have
+  contype 0). Unnamed geoms get names "<body>_g<i>" so contact sensors can find them.
+  Returns the names of the geoms made solid (feet excluded: already solid)."""
+  names = []
+  for b in SOLID_BODIES:
+    body = spec.body(b)
+    for i, g in enumerate(list(body.geoms)):
+      if g.name.endswith("_foot"):
+        continue
+      if b.endswith("_lower") and g.type == mujoco.mjtGeom.mjGEOM_CAPSULE:
+        # The shin capsule ends at the foot ball's centre with the same radius, so it
+        # would touch whenever the foot does. Keep it visual only and add an invisible
+        # collision copy that stops SHIN_GAP above the foot: "shin on the floor" then
+        # means the shin itself is lying down.
+        g.name = g.name or f"{b}_visual"
+        top, bottom = np.array(g.fromto[:3]), np.array(g.fromto[3:])
+        length = np.linalg.norm(bottom - top)
+        end = bottom + (top - bottom) * (SHIN_GAP / length)
+        c = body.add_geom(name=f"{b}_g{i}", type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+                          fromto=np.concatenate([top, end]), size=g.size, mass=0.0,
+                          contype=0, conaffinity=1, group=3, rgba=[0, 0, 0, 0])
+        names.append(c.name)
+        continue
+      if not g.name:
+        g.name = f"{b}_g{i}"
+      g.conaffinity = 1
+      names.append(g.name)
+  return names
+
+
+SHIN_GAP = 0.03  # m: the collision shin stops this far above the foot ball's centre
+
+
+def solid_geom_names(spec: mujoco.MjSpec) -> list:
+  """Names of the geoms make_body_solid made solid (to hang contact sensors on)."""
+  return [g.name for b in SOLID_BODIES for g in spec.body(b).geoms
+          if g.conaffinity == 1 and not g.name.endswith("_foot")]
 
 
 def add_terrain(spec: mujoco.MjSpec, tc) -> None:

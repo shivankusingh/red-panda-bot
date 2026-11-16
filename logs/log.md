@@ -758,3 +758,23 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Ops:** the copy-back watcher missed some logs once (scp hiccup); fetched them by hand before stopping the pod.
 - **Next:** coming back down from the tripod onto four feet (Tier 1: rear up, hold, come back down).
 - **Cost:** ~$0.44. Running total ~$14.00.
+
+### Coming back down (dn_run1-2) and a solid robot body
+- **Physics first (sim, joints held stiff in the tripod):** forward nudges up to 2 rad/s just rock it and it settles back; at 4 rad/s it topples and the front feet hit at **1.77 m/s** (walking feet land at 0.05-0.30). So coming down has two jobs: start it on purpose (shift the weight forward) and brake the fall.
+- **Design (my choices):** a separate come-down policy (`sim/red_panda_down.py`, built on the rearing env); starts from 320 tripod states the rearing policy actually holds (`tools/down_starts.py`); "landed" = all four feet down + tail tip off the floor + walking stance (tilt -2 +/- 5 deg, hind hips 16 +/- 1.5 cm) held 0.2 s; rewards: stance bells, `lower` (progress down x height bell), `four_feet`, `front_landing` (each front touchdown costs its speed squared x 10), fixed 1.5 s deadline with the late bill, plus everything rearing has (servo costs, symmetry, roll guard, pushes). `tools/eval/down_check.py` also hands the final state to the walking policy (rp_run26) and has it walk 2 s.
+- **Solid body:** my question "can the head feel the floor?" showed the head, neck, thighs, shins and hip blocks passed straight through the floor in the sim (only feet, torso and tail were solid). Now `solid_body` (on for rearing/coming down, off for walking so old runs replay unchanged) makes them collide with the floor only. The shin first touched the floor 99% of the time (its capsule ends inside the foot ball), so the collision shin now stops 3 cm above the foot. Checks: rearing rr11 and walking rp26 behave exactly the same with it on; false leg contacts 0%; a nose-first drop now stops the head at +5.3 cm instead of 5.8 cm inside the floor. New `head_contact` -5 (head/neck on the floor: the eye screens), legs added to `bad_contact`.
+
+  | | dn_run1 (no ladder) | dn_run2 (reverse ladder 10 -> 70 deg, solid body) |
+  |---|---|---|
+  | What it learned | **froze in the tripod** (leaned back to 76 deg) | comes down, no falls |
+  | Landed (all four feet) | 0/64 | 0/64: **keeps the right front paw up** (every robot) |
+  | Hand-off to walking | 63/63 fell (never came down) | **64/64 walk off** |
+  | Front landing speed | - | 0.18 m/s from 10 deg; **0.74 m/s from the real tripod** (2.7 bounces) |
+  | Worst servo | - | right hind hip 2.90 N*m from the tripod (stall) |
+
+- **Learned:**
+  - dn_run1: early on any random move flipped it or face-planted it (episodes 0.12 s long), and a fall costs the same remaining late bill as staying, so "freeze" won. Same trap as rearing run 1; the scripted tests that landed fine were coordinated, random jitter isn't.
+  - dn_run2: the all-or-nothing `four_feet` paid three feet the same as zero, so the fourth paw never had a reason to come down; "landed" was never met, the ladder never left its first rung, and it never practised from higher up. Same lesson as the late bill: graded beats all-or-nothing.
+  - Check what the evaluation actually starts from: `down_check` first inherited the run's ladder and started on the 10 deg rung.
+- **Next:** dn_run3 = continue from dn_run2 with a graded `feet_down` (feet down / 4) instead of `four_feet`.
+- **Cost:** ~$0.40. Running total ~$14.40.

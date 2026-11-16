@@ -51,14 +51,15 @@ from mujoco_playground.config import locomotion_params
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "sim"))
+import red_panda_down  # noqa: E402
 import red_panda_rear  # noqa: E402
 import red_panda_walk  # noqa: E402
 
 GO1 = "Go1JoystickFlatTerrain"
 
 p = argparse.ArgumentParser()
-p.add_argument("--env", choices=["go1", "redpanda", "rear"], required=True,
-               help="redpanda = walking; rear = rearing into the tail tripod")
+p.add_argument("--env", choices=["go1", "redpanda", "rear", "down"], required=True,
+               help="redpanda = walking; rear = rearing into the tail tripod; down = coming back down")
 p.add_argument("--name", required=True, help="output folder name under runs/")
 p.add_argument("--timesteps", type=int, default=None, help="default: Go1's 200M")
 p.add_argument("--sees_speed", action="store_true", help="red panda policy sees body speed")
@@ -104,9 +105,11 @@ if args.env == "go1":
   eval_env = registry.load(GO1, config=env_cfg)
   randomizer = registry.get_domain_randomizer(GO1)  # friction, mass, etc.
 else:
-  rear = args.env == "rear"
-  env_cfg = red_panda_rear.default_config() if rear else red_panda_walk.default_config()
-  EnvClass = red_panda_rear.RedPandaRear if rear else red_panda_walk.RedPandaWalk
+  rear = args.env in ("rear", "down")  # both use the rearing env's machinery
+  mod = {"rear": red_panda_rear, "down": red_panda_down}.get(args.env, red_panda_walk)
+  env_cfg = mod.default_config()
+  EnvClass = {"rear": red_panda_rear.RedPandaRear, "down": red_panda_down.RedPandaDown}.get(
+      args.env, red_panda_walk.RedPandaWalk)
   env_cfg.impl = args.impl
   env_cfg.policy_sees_body_speed = args.sees_speed
   for item in args.set:  # one-setting experiments without editing the env file
@@ -120,8 +123,8 @@ else:
     node[last] = json.loads(value)
     print(f"override: {key} = {node[last]}")
   if rear:
-    # Tail and torso floor contacts on top of the feet: 16 per robot.
-    env_cfg.naconmax = 16 * ppo_cfg.num_envs
+    # Tail, torso and (solid body) head/leg floor contacts on top of the feet: 24 per robot.
+    env_cfg.naconmax = 24 * ppo_cfg.num_envs
     env_cfg.njmax = 80
     # Rearing episodes are 6 s, not Go1's 20 s (the env's deadline bookkeeping needs
     # PPO's episode end to match its own).
@@ -147,7 +150,7 @@ else:
     # env's contact budget (16 x 8192) for its 128 robots, and Warp's curved-contact
     # scratch buffers (~2 KB per possible contact, each) are sized by that budget.
     eval_cfg = env_cfg.copy_and_resolve_references()
-    eval_cfg.naconmax = 16 * 128  # Brax's default num_eval_envs
+    eval_cfg.naconmax = (24 if rear else 16) * 128  # Brax's default num_eval_envs
   eval_env = EnvClass(config=eval_cfg)
   rc = env_cfg.get("randomize_config", None)  # run 10: friction, mass, servo stiffness...
   randomizer = red_panda_walk.make_domain_randomizer(env) if rc and rc.enable else None
@@ -159,7 +162,7 @@ if args.restore:  # rr_run6: continue from an earlier run instead of from scratc
     raise SystemExit(f"--restore: no checkpoints in runs/{args.restore}/checkpoints")
   extra["restore_checkpoint_path"] = str(ckpts[-1])
   print(f"warm start from {ckpts[-1]}")
-if args.env == "rear":
+if args.env in ("rear", "down"):
   extra["log_training_metrics"] = True       # -> train_progress.csv
   extra["training_metrics_steps"] = 5_000_000
 if args.tiny:
@@ -168,11 +171,11 @@ if args.tiny:
   ppo_cfg.batch_size = 8
   ppo_cfg.num_minibatches = 4
   ppo_cfg.num_evals = 2
-  ppo_cfg.num_resets_per_eval = 0 if args.env == "rear" else 1
+  ppo_cfg.num_resets_per_eval = 0 if args.env in ("rear", "down") else 1
   extra["num_eval_envs"] = 8
-  if args.env == "rear":
+  if args.env in ("rear", "down"):
     extra["training_metrics_steps"] = 2_000
-  big = args.env == "rear" or (args.env != "go1" and env_cfg.terrain_config.enable)
+  big = args.env in ("rear", "down") or (args.env != "go1" and env_cfg.terrain_config.enable)
   env_cfg.naconmax = 128 if big else 64  # 8 robots, not 8192
 
 T_ENV = time.time()

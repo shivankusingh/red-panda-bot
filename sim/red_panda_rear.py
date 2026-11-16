@@ -44,7 +44,8 @@ def default_config() -> config_dict.ConfigDict:
   c.pert_config.enable = True
   c.pert_config.velocity_kick = [0.0, 1.5708]  # pi x 0.5 m/s (the shove profile is a half sine)
   c.pert_config.kick_wait_times = [1.0, 6.0]
-  c.naconmax = 16 * 8192           # tail + torso contacts on top of the feet
+  c.solid_body = True              # head, neck, thighs, shins collide with the floor (2026-11-16)
+  c.naconmax = 24 * 8192           # tail, torso and (solid body) leg/head contacts on top of the feet
   c.njmax = 80
   c.rear_config = config_dict.create(
       starts="data/rear_starts.npz",
@@ -105,7 +106,8 @@ def default_config() -> config_dict.ConfigDict:
                                # with low hips can't earn it. A reward, not a "still down" penalty:
                                # falling would stop a penalty.
           tail_first=-1.0,     # a front foot up while the tail tip isn't down
-          bad_contact=-1.0,    # torso or tail root on the floor ("sitting")
+          bad_contact=-1.0,    # torso, tail root, or (solid body) a thigh/shin/hip on the floor
+          head_contact=-5.0,   # head or neck on the floor (solid body; the eye screens are there)
           # Speed and servo limits (user, 2026-11-15):
           late=-10.0,          # per second past the deadline without having arrived (linear: a
                                # little late still costs). A fall before arriving pays every
@@ -153,7 +155,8 @@ def rear_spec(config) -> mujoco.MjSpec:
       g.name = n
       g.conaffinity = 1  # the floor has contype 1
   spec.geom("torso").conaffinity = 1
-  for n in ["tail_tip"] + BAD_GEOMS:
+  solid = rpw.solid_geom_names(spec) if config.get("solid_body", False) else []  # made in build_spec
+  for n in ["tail_tip"] + BAD_GEOMS + solid:
     spec.add_sensor(name=f"{n}_floor_found", type=mujoco.mjtSensor.mjSENS_CONTACT,
                     objtype=mujoco.mjtObj.mjOBJ_GEOM, objname=n,
                     reftype=mujoco.mjtObj.mjOBJ_GEOM, refname="floor",
@@ -176,8 +179,12 @@ class RedPandaRear(rpw.RedPandaWalk):
     self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
     self._post_init()
     m = self._mj_model
-    self._found_adr = {n: int(m.sensor_adr[m.sensor(f"{n}_floor_found").id])
-                       for n in ["tail_tip"] + BAD_GEOMS}
+    self._found_adr = {m.sensor(i).name[:-len("_floor_found")]: int(m.sensor_adr[i])
+                       for i in range(m.nsensor) if m.sensor(i).name.endswith("_floor_found")}
+    # Solid-body parts that touch the floor: the head/neck (eye screens!) and the legs.
+    self._head_geoms = [n for n in self._found_adr if n.startswith(("head", "neck"))]
+    self._leg_geoms = [n for n in self._found_adr if n.endswith(tuple(f"_g{i}" for i in range(9)))
+                       and n[:2] in ("fl", "fr", "bl", "br")]
     self._hind_thigh = np.array([m.body("bl_upper").id, m.body("br_upper").id])
     self._lt_act = jp.concatenate([self._leg_act, self._tail_act])     # the 15 policy servos
     self._lt_qvel = jp.concatenate([self._leg_qvel, self._tail_qvel])
@@ -203,7 +210,10 @@ class RedPandaRear(rpw.RedPandaWalk):
     bank = np.load(REPO / rc.starts)
     self._bank_qpos, self._bank_qvel = jp.array(bank["qpos"]), jp.array(bank["qvel"])
     moving = bank["moving"].astype(bool)
-    self._bank_move, self._bank_stand = jp.array(np.where(moving)[0]), jp.array(np.where(~moving)[0])
+    move, stand = np.where(moving)[0], np.where(~moving)[0]
+    # A bank with only one kind (e.g. coming down: all tripod states) uses it for both.
+    self._bank_move = jp.array(move if len(move) else stand)
+    self._bank_stand = jp.array(stand if len(stand) else move)
     self._ladder_on = rc.get("ladder_fraction", 0.0) > 0
     if self._ladder_on:
       ladder = np.load(REPO / rc.ladder)
@@ -416,6 +426,19 @@ class RedPandaRear(rpw.RedPandaWalk):
                      qacc=jp.zeros_like(data.qacc), qacc_warmstart=jp.zeros_like(data.qacc_warmstart))
     return mjx.forward(self.mjx_model, d)
 
+  def _target_contacts(self, data, contact):
+    """The contacts the target pose needs (rearing: the tail tripod)."""
+    return self._in_tripod(data, contact)
+
+  def _in_box(self, data, contact):
+    """In the target pose: its contacts, tilt and hip height all within tolerance."""
+    rc, rw = self._config.rear_config, self._config.reward_config
+    pitch, _ = self._torso_tilt(data)
+    hip_h = jp.mean(data.xpos[self._hind_thigh, 2])
+    return (self._target_contacts(data, contact)
+            & (jp.abs(-jp.rad2deg(pitch) - rw.target_pitch_deg) < rc.arrive_tilt_tol_deg)
+            & (jp.abs(hip_h - rw.target_hip_height) < rc.arrive_height_tol))
+
   def _track_arrival(self, data, info, contact, done):
     """Updates info's arrival bookkeeping. Returns (arrived this step, late seconds / dt).
 
@@ -425,13 +448,8 @@ class RedPandaRear(rpw.RedPandaWalk):
     as if it stayed late to the end: falling can't stop the bill.
     """
     rc = self._config.rear_config
-    rw = self._config.reward_config
     t = info["ep_time"]
-    pitch, _ = self._torso_tilt(data)
-    hip_h = jp.mean(data.xpos[self._hind_thigh, 2])
-    in_box = (self._in_tripod(data, contact)
-              & (jp.abs(-jp.rad2deg(pitch) - rw.target_pitch_deg) < rc.arrive_tilt_tol_deg)
-              & (jp.abs(hip_h - rw.target_hip_height) < rc.arrive_height_tol))
+    in_box = self._in_box(data, contact)
     info["box_since"] = jp.where(in_box, jp.where(info["box_since"] < 0, t, info["box_since"]), -1.0)
     newly = (~info["arrived"] & in_box & ~done
              & (t - info["box_since"] >= rc.arrive_hold_s - self.dt / 2))
@@ -479,7 +497,9 @@ class RedPandaRear(rpw.RedPandaWalk):
     hip_h = jp.mean(data.xpos[self._hind_thigh, 2])
     tail_down = self._found(data, "tail_tip")
     front_up = ~contact[0] | ~contact[1]
-    bad = jp.any(jp.array([self._found(data, n) for n in BAD_GEOMS]))
+    bad = jp.any(jp.array([self._found(data, n) for n in BAD_GEOMS + self._leg_geoms]))
+    head_down = (jp.any(jp.array([self._found(data, n) for n in self._head_geoms]))
+                 if self._head_geoms else jp.array(False))
     leg_q, leg_qvel = data.qpos[self._leg_qpos], data.qvel[self._leg_qvel]
     force, qvel = data.actuator_force[self._lt_act], data.qvel[self._lt_qvel]
     feet_v = data.sensordata[self._foot_linvel_sensor_adr][:, :2]
@@ -492,6 +512,7 @@ class RedPandaRear(rpw.RedPandaWalk):
         "tripod_contact": self._in_tripod(data, contact).astype(jp.float32),
         "tail_first": (front_up & ~tail_down).astype(jp.float32),
         "bad_contact": bad.astype(jp.float32),
+        "head_contact": head_down.astype(jp.float32),
         "late": late,
         "servo_pinned": pinned,
         "over_peak": over,
