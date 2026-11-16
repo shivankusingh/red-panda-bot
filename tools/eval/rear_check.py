@@ -7,7 +7,7 @@ held 0.2 s), arrival time, fell, final tilt and hip height; per servo: peak torq
 robot 0.
 
   python tools/eval/rear_check.py rr_run1 [robots] [rung]
-  -> runs/<run>/rear_check.json, runs/<run>/rear.gif
+  -> runs/<run>/rear_check.json, rear.gif (side view), rear_back.gif (from behind)
   With a ladder rung (0 = 70 deg ... 6 = 10 deg, tools/rear_ladder.py) every robot starts
   from that pose instead -> rear_check_rung<r>.json, rear_rung<r>.gif.
 """
@@ -176,17 +176,33 @@ spec.geom("floor").material = "grid"
 vm = spec.compile()
 vd = mujoco.MjData(vm)
 ren = mujoco.Renderer(vm, height=360, width=480)
-cam = mujoco.MjvCamera()
-cam.distance, cam.elevation, cam.azimuth = 0.9, -5, 90
-frames = []
-for i, q in enumerate(qlog):
-  if i % 2:
-    continue
-  vd.qpos[:] = q
-  mujoco.mj_forward(vm, vd)
-  cam.lookat[:] = [q[0], q[1], 0.12]
-  ren.update_scene(vd, cam)
-  frames.append(Image.fromarray(ren.render()))
+
+
+def render(view):
+  """view "side": camera on the robot's left; "back": straight behind, looking forward.
+  The direction comes from the hind feet (forward = square to the line between them), not
+  the torso, so a rolled or twisted torso shows up as crooked instead of turning the camera."""
+  cam = mujoco.MjvCamera()
+  cam.distance, cam.elevation = (0.9, -5) if view == "side" else (0.75, -2)
+  bl, br = vm.site("bl_foot").id, vm.site("br_foot").id
+  frames = []
+  for i, q in enumerate(qlog):
+    if i % 2:
+      continue
+    vd.qpos[:] = q
+    mujoco.mj_forward(vm, vd)
+    left = vd.site_xpos[bl] - vd.site_xpos[br]                 # right foot -> left foot
+    heading = np.degrees(np.arctan2(-left[0], left[1]))        # forward is 90 deg clockwise of that
+    mid = (vd.site_xpos[bl] + vd.site_xpos[br]) / 2
+    cam.azimuth = heading + (90 if view == "side" else 0)
+    cam.lookat[:] = [mid[0], mid[1], 0.13]
+    ren.update_scene(vd, cam)
+    frames.append(Image.fromarray(ren.render()))
+  return frames
+
+
+for view, name in [("side", f"rear{TAG}.gif"), ("back", f"rear{TAG}_back.gif")]:
+  frames = render(view)
+  frames[0].save(run / name, save_all=True, append_images=frames[1:], duration=40, loop=0)
 ren.close()
-frames[0].save(run / f"rear{TAG}.gif", save_all=True, append_images=frames[1:], duration=40, loop=0)
-print(f"\n-> {run / f'rear_check{TAG}.json'}, {run / f'rear{TAG}.gif'}")
+print(f"\n-> {run / f'rear_check{TAG}.json'}, {run / f'rear{TAG}.gif'} (side), {run / f'rear{TAG}_back.gif'} (from behind)")

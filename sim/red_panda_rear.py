@@ -117,6 +117,11 @@ def default_config() -> config_dict.ConfigDict:
           joint_acc=-2.5e-7,
           feet_slip=-0.1,      # walking's only counted with a joystick command; always on here
           roll_rate=-0.05,     # walking's ang_vel_xy without pitch (rearing must pitch)
+          # Symmetry (rr_run8a, user): rr_run7a held the tripod crooked: tail bent 20 deg to the
+          # right (wag +27, wag2 +15 deg), left hind leg splayed 16 deg wider, right hind hip
+          # working 21% harder. Off here; rr_run8a: tail_straight -2, leg_symmetry -5 (costs: negative).
+          tail_straight=0.0,   # wag^2 + wag2^2 (rad): the tail's two sideways joints at 0
+          leg_symmetry=0.0,    # (left hind hip_side - right hind hip_side)^2 (rad; + = outward on both)
       ),
       target_pitch_deg=70.0,
       tilt_sigmas_deg=[35.0, 8.0],
@@ -478,5 +483,7 @@ class RedPandaRear(rpw.RedPandaWalk):
         "joint_acc": jp.sum(jp.square((leg_qvel - info["last_leg_qvel"]) / self.dt)),
         "feet_slip": jp.sum(jp.sum(jp.square(feet_v), axis=-1) * contact),
         "roll_rate": jp.square(self.get_gyro(data)[0]),
+        "tail_straight": jp.square(data.qpos[self._tail_qpos[0]]) + jp.square(data.qpos[self._tail_qpos[2]]),
+        "leg_symmetry": jp.square(leg_q[LEG_JOINTS.index("bl_hip_side")] - leg_q[LEG_JOINTS.index("br_hip_side")]),
     }
     return {k: v for k, v in terms.items() if k in rc.scales}

@@ -674,3 +674,25 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Sim go/no-go so far:** rearing >= 90% with servo limits and randomization: yes (rough model). Torques: averages fine, peaks over the rule 1-2% of the time (hind hips). Caveats: 16 robots per condition is a small sample; still the box model, not CAD masses or the measured servo model.
 - **Next:** bring the hind-hip peaks under 1.91 N*m (maybe 7a + the fair deadline), hips 15.0 -> 16 cm, then the transition back down and fall recovery.
 - **Cost:** ~$0.49 (two runs). Running total ~$12.20.
+
+### Rearing run rr8a: a straight tail and symmetric legs
+- **Saw (from a straight-behind view I asked for):** rr7a held the tripod crooked. New `tools/eval/rear_symmetry.py` (64 robots holding the tripod): tail bent sideways (wag +27, wag2 +15 deg; tip 10-16 cm right of the centre line, pointing 20 deg right of straight back; it bends more toward the tip), left hind leg splayed 16 deg wider (hip_side 23 vs 7 deg), right hind hip working 21% harder (0.74 vs 0.61 N*m average; it also had the 2.07 N*m peak), centre of mass 2.2 cm right, roll +1.7 deg. Nothing in the rewards asked for symmetry, so the policy picked a side early and kept it. The joint angles (27 + 15) overstate the visible bend (20 deg): with the body up 70 deg and the tail lifted 50 deg, the "sideways" joints partly twist the tail instead. Hind knees rest perfectly straight on their 0 deg end stop (the real robot needs a hard stop there).
+- **Did:** `rear_check.py` now renders a side view and a straight-behind view (camera square to the line between the hind feet, so a twisted torso shows instead of turning the camera). rr8a = warm start from rr7a + **tail_straight -2** (wag^2 + wag2^2) + **leg_symmetry -5** ((left - right hind hip_side)^2). Caught a sign slip in my own check (+2/+5 would pay it to be crooked): costs need negative weights.
+
+  | | rr7a | **rr8a** |
+  |---|---|---|
+  | Tail wag / wag2; tip sideways | +27 / +15 deg; 15.7 cm | **+7 / +6 deg; 5.9 cm** |
+  | Hind hip_side left / right | 23 / 7 deg | **12 / 14 deg** |
+  | Hind foot load left / right | 7.4 / 8.1 N | **7.8 / 7.8 N** |
+  | Hind hip torque left / right | 0.61 / 0.74 N*m | **0.61 / 0.65 N*m** |
+  | Roll | +1.7 deg | **+4.1 deg (worse; up to 9 deg)** |
+  | From walking starts: reached / median / within 0.8 s | 64 / 0.87 s / 17 | **64 / 0.78 s / 42** |
+  | Stress test | all 16/16, 0 falls | all 16/16 except **0.4 m/s forward push: 3/16 fell** |
+
+- **Learned:**
+  - Look from the angle that shows the problem: the side view hid all of this.
+  - Symmetry has to be asked for. Straightening the tail and legs moved the lean into the body (roll 1.7 -> 4.1 deg): fixing one part shifts the compensation somewhere else.
+  - The bent tail was doing some balancing work after all: straight, it loses some forward-push tolerance.
+  - Falls (my question): backward tips from the tripod are hard (the tail is a kickstand 35 cm behind; it took a 2 m/s shove) but would hit hard (~3-4 m/s, rough). Plan in CLAUDE.md: pushes in training, a bail-out reflex, go limp on falls, bumpers, breakaway tail. Mid-air righting like a cat isn't possible: the 160 g tail on slow servos turns the body only ~12 deg (roll) / ~4 deg (pitch) in a 20 cm fall.
+- **Next:** rr9a = rr8a + roll guard; rr9b = rr8a + pushes in training.
+- **Cost:** ~$0.24. Running total ~$12.45.
