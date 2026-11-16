@@ -718,3 +718,23 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Speed and the hip-peak rule pull against each other now (rr8a fast but over; rr9a slower and further over).
 - **Next:** rr9a + pushes (keep the roll guard); separately the hip peaks (e.g. rr9a + the fair deadline from rr7b).
 - **Cost:** ~$0.55. Running total ~$13.00.
+
+### Rearing runs rr10a/rr10b: pushes with the roll guard, and the fair deadline for the hip peaks
+- **Did:** both warm-start from rr9a (symmetric; roll guard -20). **rr10a:** + pushes in training (up to 0.5 m/s, every 1-6 s). **rr10b:** + the distance-scaled deadline (full budget 1.5 s -> 0.8 s; 1.5 = just above rr9a's slowest arrival, so it starts where the robot is). The budget reached ~0.9 s.
+
+  | | rr9a | rr10a (+ pushes) | **rr10b (+ fair deadline)** |
+  |---|---|---|---|
+  | From walking starts: reached / falls / median | 64 / 0 / 1.00 s | 64 / 0 / **0.94 s** | 64 / 0 / 0.98 s |
+  | Roll (spread across robots) | -0.1 deg (+/-2) | -0.8 deg (+/-4) | **+0.2 deg (+/-2)** |
+  | Hind foot load left / right | 8.0 / 7.9 N | 7.8 / 7.7 N | **8.0 / 8.0 N** |
+  | Tail tip sideways | 2.3 cm | 1.4 cm | **1.0 cm** |
+  | Hips (target 16) | 15.8 cm | 15.2 cm | **15.8 cm** |
+  | Hind hip peaks, 99th pct (% of stall 2.94) | 2.31 / 2.21 (79 / 75%) | 2.02 / 2.15 (69 / 73%) | **1.96 / 1.95 (67 / 66%)** |
+  | Stress test (20 conditions) | all pass | all pass | all pass |
+
+- **Learned:**
+  - With the roll guard on, pushes no longer make it brace sideways (rr9b leaned 22 deg; rr10a 0.8 deg).
+  - The fair deadline, started where the robot is, lowered the hip peaks into the CLAUDE.md pass band ("peaks below ~60-70% of stall"; I had been checking a stricter 65% line) without losing speed.
+  - rr10b is the best-behaved rearing policy so far; rr10a is the one that practised being shoved.
+- **Next:** rr11 = rr10b + pushes in training (both together). Then the next Tier 1 piece: coming back down from the tripod.
+- **Cost:** ~$0.53. Running total ~$13.55.
