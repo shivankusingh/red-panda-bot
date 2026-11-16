@@ -64,6 +64,7 @@ def make_env(sag=1.0):
   c = config_dict.ConfigDict(cfg["env"])
   c.impl = "jax"
   c.rear_config.ladder_fraction = 0.0      # real starts only
+  c.pert_config.enable = False             # only this test's own pushes
   if "servo_config" in c:                  # delay applied per condition below, not sampled
     c.servo_config.delay_ms = [0.0, 0.0]
     c.servo_config.no_load_speed *= sag    # battery sag: slower...

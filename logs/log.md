@@ -696,3 +696,25 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Falls (my question): backward tips from the tripod are hard (the tail is a kickstand 35 cm behind; it took a 2 m/s shove) but would hit hard (~3-4 m/s, rough). Plan in CLAUDE.md: pushes in training, a bail-out reflex, go limp on falls, bumpers, breakaway tail. Mid-air righting like a cat isn't possible: the 160 g tail on slow servos turns the body only ~12 deg (roll) / ~4 deg (pitch) in a 20 cm fall.
 - **Next:** rr9a = rr8a + roll guard; rr9b = rr8a + pushes in training.
 - **Cost:** ~$0.24. Running total ~$12.45.
+
+### Rearing runs rr9a/rr9b: roll guard vs. pushes in training
+- **Did:** both warm-start from rr8a (straight tail, symmetric legs). **rr9a:** + `roll` -20 (roll^2, rad): rr8a had moved the lean into the body (4.1 deg). **rr9b:** + pushes in training (walking's random torso shoves, up to 0.5 m/s, every 1-6 s, any direction; the rearing step never called them before). The check tools now switch the env's random pushes off, so they judge the policy, not the luck of the shoves.
+
+  | | rr8a | **rr9a (roll guard)** | rr9b (pushes) |
+  |---|---|---|---|
+  | Roll | +4.1 deg | **-0.1 deg (all robots within +/-2.2)** | **+21.8 deg** |
+  | Hind foot load left / right | 7.8 / 7.8 N | 8.0 / 7.9 N | 6.2 / 9.3 N |
+  | Hind hip torque left / right (rated 0.98) | 0.61 / 0.65 | **0.59 / 0.58** | 0.44 / 0.93 |
+  | Tail tip sideways | 5.9 cm | **2.3 cm** | 14.8 cm |
+  | Hips (target 16) | 15.3 cm | **15.8 cm** | 14.8 cm |
+  | From walking starts: median / within 0.8 s | 0.78 s / 42 of 64 | 1.00 s / 0 | 0.84 s / 21 |
+  | Hind hip peaks (65% of stall = 1.91) | 2.04 / 1.89 | 2.31 / 2.21 | 1.88 / 2.16 |
+  | Stress: 0.4 m/s forward push while holding | 3/16 fell | **16/16** | **16/16** |
+  | Stress: the rest | all pass | **all pass** | stiffness x0.7 14/16, all-at-once 15/16 |
+
+- **Learned:**
+  - rr9a is the cleanest pose yet (upright, symmetric, tail nearly straight, hips 15.8 cm), and standing straight alone won back the forward-push tolerance. It got slower (1.0 s) and pushes harder getting up (peaks 2.3 N*m).
+  - rr9b: pushes from random directions with nothing against leaning -> it braced 22 deg sideways and put nearly all the hip work on one leg (0.93 N*m, ~rated). A cheap way to resist shoves, bad for the hardware. Same lesson again: the robot compensates wherever we didn't ask; pushes need the roll guard with them.
+  - Speed and the hip-peak rule pull against each other now (rr8a fast but over; rr9a slower and further over).
+- **Next:** rr9a + pushes (keep the roll guard); separately the hip peaks (e.g. rr9a + the fair deadline from rr7b).
+- **Cost:** ~$0.55. Running total ~$13.00.

@@ -38,6 +38,7 @@ cfg = json.load(open(run / "config.json"))
 c = config_dict.ConfigDict(cfg["env"])
 c.impl = "jax"
 c.naconmax = 16 * N
+c.pert_config.enable = False  # no random env pushes in checks (rr_run9b trained with them)
 if "rear_config" in c:  # real starts only (standing / mid-walk), unless a rung was asked for
   c.rear_config.ladder_fraction = 0.0 if RUNG is None else 1.0
 env = rr.RedPandaRear(config=c)

@@ -34,6 +34,7 @@ cfg = json.load(open(run / "config.json"))
 c = config_dict.ConfigDict(cfg["env"])
 c.impl = "jax"
 c.naconmax = 16 * N
+c.pert_config.enable = False  # no random env pushes in checks (rr_run9b trained with them)
 c.rear_config.ladder_fraction = 0.0
 env = rr.RedPandaRear(config=c)
 m = env.mj_model

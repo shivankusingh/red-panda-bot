@@ -122,6 +122,8 @@ def default_config() -> config_dict.ConfigDict:
           # working 21% harder. Off here; rr_run8a: tail_straight -2, leg_symmetry -5 (costs: negative).
           tail_straight=0.0,   # wag^2 + wag2^2 (rad): the tail's two sideways joints at 0
           leg_symmetry=0.0,    # (left hind hip_side - right hind hip_side)^2 (rad; + = outward on both)
+          roll=0.0,            # rr_run9a: roll^2 (rad); straight tail + legs moved the lean into the
+                               # body (rr_run8a roll 4.1 deg, up to 9). Off here; rr_run9a: -20.
       ),
       target_pitch_deg=70.0,
       tilt_sigmas_deg=[35.0, 8.0],
@@ -239,7 +241,7 @@ class RedPandaRear(rpw.RedPandaWalk):
             "command": jp.zeros(3), "gait_phase": jp.zeros(()),
             "last_act": jp.zeros(self.action_size), "last_last_act": jp.zeros(self.action_size),
             "feet_air_time": jp.zeros(4), "last_contact": jp.zeros(4, dtype=bool),
-            "steps_until_next_pert": jp.array(10**6, dtype=jp.int32), "steps_since_last_pert": 0,
+            "steps_since_last_pert": 0,
             "last_leg_qvel": qvel[self._leg_qvel],
             # Per episode (step() clears them when a new episode starts: Playground's
             # auto-reset restores the physics state but keeps info):
@@ -253,6 +255,17 @@ class RedPandaRear(rpw.RedPandaWalk):
             "play_rung": jp.array(0, dtype=jp.int32)}  # the rung this episode started on
     rng, key = jax.random.split(rng)
     info["on_ladder"] = jax.random.uniform(key) < rc.get("ladder_fraction", 0.0)
+    # Pushes (rr_run9b): walking's random shoves, timed like walking (pert_config); the
+    # timer keeps running across episodes. Never when pert_config.enable is off.
+    pc = self._config.pert_config
+    rng, k1, k2, k3 = jax.random.split(rng, 4)
+    wait = jax.random.uniform(k1, minval=pc.kick_wait_times[0], maxval=pc.kick_wait_times[1])
+    info["steps_until_next_pert"] = jp.where(pc.enable, jp.round(wait / self.dt), 10**6).astype(jp.int32)
+    info["pert_duration_seconds"] = jax.random.uniform(k2, minval=pc.kick_durations[0], maxval=pc.kick_durations[1])
+    info["pert_duration"] = jp.round(info["pert_duration_seconds"] / self.dt).astype(jp.int32)
+    info["pert_steps"] = jp.array(0, dtype=jp.int32)
+    info["pert_dir"] = jp.zeros(3)
+    info["pert_mag"] = jax.random.uniform(k3, minval=pc.velocity_kick[0], maxval=pc.velocity_kick[1])
     if self._offset_deg > 0:
       rng, key = jax.random.split(rng)
       info["joint_offset"] = jp.deg2rad(self._offset_deg) * jax.random.uniform(
@@ -290,6 +303,8 @@ class RedPandaRear(rpw.RedPandaWalk):
               "late_s", "deadline_s", "pinned_servos", "ladder_rung", "ladder_ends", "cost_factor"]
 
   def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+    if self._config.pert_config.enable:  # rr_run9b: walking's random shoves to the torso
+      state = self._maybe_apply_perturbation(state)
     info = state.info
     info["time"] += self.dt
     # New episode? Playground's auto-reset puts its step counter back to 0 (episode
@@ -485,5 +500,6 @@ class RedPandaRear(rpw.RedPandaWalk):
         "roll_rate": jp.square(self.get_gyro(data)[0]),
         "tail_straight": jp.square(data.qpos[self._tail_qpos[0]]) + jp.square(data.qpos[self._tail_qpos[2]]),
         "leg_symmetry": jp.square(leg_q[LEG_JOINTS.index("bl_hip_side")] - leg_q[LEG_JOINTS.index("br_hip_side")]),
+        "roll": jp.square(self._torso_tilt(data)[1]),
     }
     return {k: v for k, v in terms.items() if k in rc.scales}
