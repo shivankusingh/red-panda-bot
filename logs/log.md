@@ -651,3 +651,26 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - My predictions: the tail slam (cheat #5) showed up in rr2a/rr3; ghost knees didn't.
 - **Open:** speed (median 4.1 s vs 0.8 s target; the deadline curriculum barely runs for walking starts yet), hips 14.9 cm, right hind hip peak 2.18 N*m (over 65% of stall 2.3% of the time), success 78% (go/no-go needs 90%).
 - **Cost:** ~$1.80 for rearing runs (EU-RO-1 GPUs scarce: often several minutes of retries). Running total ~$11.70.
+
+### Rearing runs rr7a/rr7b: speed, and the stress test
+- **Did:** the deadline curriculum in rr6b had stalled (average deadline ~1.4 s while arrivals got *slower*, 1.7 -> 2.6 s). Two reasons: one deadline per robot mixed very different starts (a 70 deg replay arrives in 0.3 s and tightens it, a walking start takes ~4 s and loosens it), and the 0.97 discount hides a late bill that starts seconds after the effort. Both runs warm-start from rr6b (ladder 100%, replay 50%, 300M steps):
+  - **rr7a:** discount 0.97 -> **0.99** (look-ahead ~0.67 s -> ~2 s).
+  - **rr7b (my idea, made fair per start):** `deadline_by_distance`: each episode's deadline = full budget x (70 deg - start tilt) / 70 (min 0.1 s), and the full budget ladders down from **4.0 s** (what rr6b already did) to 0.8 s.
+
+  | From walking starts (64) | rr6b | **rr7a (0.99)** | rr7b (fair deadline) |
+  |---|---|---|---|
+  | Reached the tripod | 50 | **64** | 64 |
+  | Median / fastest / slowest | 4.1 / 1.24 / 5.8 s | **0.87 / 0.74 / 1.16 s** | 1.83 / 1.18 / 3.40 s |
+  | Within 0.8 s | 0 | **17** | 0 |
+  | Hind hip peaks (99th pct; 65% of stall = 1.91 N*m) | 2.18 | 1.96 / 2.07 (over 1-2% of the time) | 1.69 / 1.83 |
+  | Hips at the end (target 16) | 14.9 cm | 15.0 cm | 15.3 cm |
+
+- **Stress test** (`tools/eval/rear_stress.py`, new): rr7a, 16 robots per condition from walking starts, one difference at a time. **All 20 conditions 16/16 reached, 0 falls**: friction 0.4 / 0.3 / 0.2 (past training), mass x0.9 / x1.1 / x1.2 (past training), centre of mass +/-2 cm, servo stiffness x0.7 / x1.3, delay 20 / 40 ms, pushes 0.2 and 0.4 m/s forward and backward while holding and 0.2 m/s backward while getting up (pushes never trained), all-at-once, and battery sag (servo torque and speed x0.9, never trained; slowest at 1.17 s). Only blemish: friction 0.2, one robot slipped out of the tripod by 6 s (no fall). Checked that the test can fail: a 2 m/s backward shove knocks 4/4 over; a 1 m/s forward shove doesn't.
+- **Learned:**
+  - The look-ahead decided speed: once the robot could rear (rr6b), discount 0.99 took it from 4.1 s to 0.87 s. In rr5a, before it could rear, 0.99 did nothing: change what limits it *now*.
+  - A curriculum has to start where the learner is (4.0 s, not 2.0 s: a first rung you can't reach never gets climbed) and judge every start fairly. It helped (4.1 -> 1.8 s) but stalled at ~1.5 s with the short look-ahead.
+  - Training randomization is practice (a random mix per robot); the stress test is the exam (one condition at a time, at and past the edges, plus things never trained).
+  - Speed costs servo margin: rr7a's hind hips go over the 65%-of-stall rule 1-2% of the time; rr7b's slower rear-up stays under it.
+- **Sim go/no-go so far:** rearing >= 90% with servo limits and randomization: yes (rough model). Torques: averages fine, peaks over the rule 1-2% of the time (hind hips). Caveats: 16 robots per condition is a small sample; still the box model, not CAD masses or the measured servo model.
+- **Next:** bring the hind-hip peaks under 1.91 N*m (maybe 7a + the fair deadline), hips 15.0 -> 16 cm, then the transition back down and fall recovery.
+- **Cost:** ~$0.49 (two runs). Running total ~$12.20.

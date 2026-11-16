@@ -81,6 +81,12 @@ def default_config() -> config_dict.ConfigDict:
       deadline_start=2.0,
       deadline_final=0.8,     # later try 0.6
       deadline_step=0.1,
+      # rr_run7b: scale each episode's deadline by how far its start is from the tripod:
+      # deadline = full budget x (70 deg - start tilt) / 70 deg (0..1, at least 0.1 s), so a
+      # 70 deg ladder start and a walking start are judged fairly and the curriculum moves
+      # one number (the full budget, rear_config.deadline) for all of them. Start it near
+      # what the policy already does (rr_run6b: median 4.1 s from walking starts).
+      deadline_by_distance=False,
   )
   c.reward_config = config_dict.create(
       scales=config_dict.create(
@@ -236,6 +242,7 @@ class RedPandaRear(rpw.RedPandaWalk):
             "box_since": jp.array(-1.0), "arrive_time": jp.array(-1.0),
             # Kept across episodes (the curriculums):
             "deadline": jp.array(rc.deadline_start),
+            "ep_deadline": jp.array(rc.deadline_start),  # this episode's deadline (scaled or not)
             "life_steps": jp.array(0, dtype=jp.int32),  # steps this robot has lived (cost curriculum)
             "rung": jp.array(0, dtype=jp.int32),
             "play_rung": jp.array(0, dtype=jp.int32)}  # the rung this episode started on
@@ -305,6 +312,14 @@ class RedPandaRear(rpw.RedPandaWalk):
         info["last_motor_targets"] = jp.where(use, jp.stack([data0.ctrl, data0.ctrl]),
                                               info["last_motor_targets"])
 
+    # This episode's deadline, set once from where the episode starts.
+    ep_dl = info["deadline"]
+    if self._config.rear_config.get("deadline_by_distance", False):
+      tilt0 = -jp.rad2deg(self._torso_tilt(data0)[0])
+      target = self._config.reward_config.target_pitch_deg
+      ep_dl = jp.maximum(info["deadline"] * jp.clip((target - tilt0) / target, 0.0, 1.0), 0.1)
+    info["ep_deadline"] = jp.where(new_ep, ep_dl, info["ep_deadline"])
+
     targets = self._targets(action, info)
     if self._servo_on:
       data = self._servo_substeps(data0, targets, info)
@@ -330,7 +345,7 @@ class RedPandaRear(rpw.RedPandaWalk):
     # Curriculum, on the episode's last step (fell, or ran out of time).
     rc = self._config.rear_config
     ep_end = done | (info["ep_time"] >= self._config.episode_length * self.dt - self.dt / 2)
-    on_time = info["arrived"] & (info["arrive_time"] <= info["deadline"])
+    on_time = info["arrived"] & (info["arrive_time"] <= info["ep_deadline"])
     tighten = ep_end & on_time & ~done
     loosen = ep_end & (done | ~info["arrived"])
     deadline_now = info["deadline"]
@@ -398,7 +413,7 @@ class RedPandaRear(rpw.RedPandaWalk):
     info["arrive_time"] = jp.where(newly, info["box_since"], info["arrive_time"])
     info["arrived"] = info["arrived"] | newly
 
-    deadline = info["deadline"]
+    deadline = info["ep_deadline"]
     may_count = in_box & (info["box_since"] <= deadline)
     late = (~info["arrived"] & (t > deadline) & ~may_count).astype(jp.float32)
     remaining = jp.maximum(self._config.episode_length * self.dt - jp.maximum(t, deadline), 0.0)
