@@ -51,12 +51,14 @@ from mujoco_playground.config import locomotion_params
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "sim"))
+import red_panda_rear  # noqa: E402
 import red_panda_walk  # noqa: E402
 
 GO1 = "Go1JoystickFlatTerrain"
 
 p = argparse.ArgumentParser()
-p.add_argument("--env", choices=["go1", "redpanda"], required=True)
+p.add_argument("--env", choices=["go1", "redpanda", "rear"], required=True,
+               help="redpanda = walking; rear = rearing into the tail tripod")
 p.add_argument("--name", required=True, help="output folder name under runs/")
 p.add_argument("--timesteps", type=int, default=None, help="default: Go1's 200M")
 p.add_argument("--sees_speed", action="store_true", help="red panda policy sees body speed")
@@ -68,6 +70,8 @@ p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     "reward_config.scales.swing_height=-600.0")
 p.add_argument("--ppo", action="append", default=[], metavar="KEY=VALUE",
                help="override one PPO setting (repeatable), e.g. num_evals=3")
+p.add_argument("--restore", default=None, metavar="RUN",
+               help="warm start: begin from RUN's latest checkpoint (same network shape)")
 p.add_argument("--no_checkpoints", action="store_true",
                help="skip the ~85 MB orbax checkpoints (speed experiments)")
 p.add_argument("--compile_cache", default=None, metavar="DIR",
@@ -100,7 +104,9 @@ if args.env == "go1":
   eval_env = registry.load(GO1, config=env_cfg)
   randomizer = registry.get_domain_randomizer(GO1)  # friction, mass, etc.
 else:
-  env_cfg = red_panda_walk.default_config()
+  rear = args.env == "rear"
+  env_cfg = red_panda_rear.default_config() if rear else red_panda_walk.default_config()
+  EnvClass = red_panda_rear.RedPandaRear if rear else red_panda_walk.RedPandaWalk
   env_cfg.impl = args.impl
   env_cfg.policy_sees_body_speed = args.sees_speed
   for item in args.set:  # one-setting experiments without editing the env file
@@ -113,34 +119,57 @@ else:
       raise SystemExit(f"--set: no setting named {key}")
     node[last] = json.loads(value)
     print(f"override: {key} = {node[last]}")
+  if rear:
+    # Tail and torso floor contacts on top of the feet: 16 per robot.
+    env_cfg.naconmax = 16 * ppo_cfg.num_envs
+    env_cfg.njmax = 80
+    # Rearing episodes are 6 s, not Go1's 20 s (the env's deadline bookkeeping needs
+    # PPO's episode end to match its own).
+    ppo_cfg.episode_length = env_cfg.episode_length
+    # Go1's config resets every robot 10x per eval, which also wipes the env's info:
+    # the per-robot deadline curriculum would restart at 2 s every ~250 steps.
+    # Robots still start from varied walking states (each keeps its own bank pick).
+    ppo_cfg.num_resets_per_eval = 0
   if env_cfg.terrain_config.enable:
     # Terrain: a foot on a lump touches it at up to ~3 points (measured 11-12 contacts
     # per robot standing on the hardest level) vs 1 on the flat plane. Too-small
     # buffers make Warp drop contacts silently, so size them for 16 per robot.
     env_cfg.naconmax = 16 * ppo_cfg.num_envs
     env_cfg.njmax = 80
-  env = red_panda_walk.RedPandaWalk(config=env_cfg)
+  env = EnvClass(config=env_cfg)
   eval_cfg = env_cfg
-  if env_cfg.terrain_config.enable:
+  if env_cfg.terrain_config.enable or rear:
     # Run 22a crashed (GPU out of memory) at an eval: the eval env had the training
     # env's contact budget (16 x 8192) for its 128 robots, and Warp's curved-contact
     # scratch buffers (~2 KB per possible contact, each) are sized by that budget.
     eval_cfg = env_cfg.copy_and_resolve_references()
     eval_cfg.naconmax = 16 * 128  # Brax's default num_eval_envs
-  eval_env = red_panda_walk.RedPandaWalk(config=eval_cfg)
+  eval_env = EnvClass(config=eval_cfg)
   rc = env_cfg.get("randomize_config", None)  # run 10: friction, mass, servo stiffness...
   randomizer = red_panda_walk.make_domain_randomizer(env) if rc and rc.enable else None
 
 extra = {}
+if args.restore:  # rr_run6: continue from an earlier run instead of from scratch
+  ckpts = sorted(d for d in (REPO / "runs" / args.restore / "checkpoints").iterdir() if d.is_dir())
+  if not ckpts:
+    raise SystemExit(f"--restore: no checkpoints in runs/{args.restore}/checkpoints")
+  extra["restore_checkpoint_path"] = str(ckpts[-1])
+  print(f"warm start from {ckpts[-1]}")
+if args.env == "rear":
+  extra["log_training_metrics"] = True       # -> train_progress.csv
+  extra["training_metrics_steps"] = 5_000_000
 if args.tiny:
   ppo_cfg.num_timesteps = 20_000
   ppo_cfg.num_envs = 8
   ppo_cfg.batch_size = 8
   ppo_cfg.num_minibatches = 4
   ppo_cfg.num_evals = 2
-  ppo_cfg.num_resets_per_eval = 1
+  ppo_cfg.num_resets_per_eval = 0 if args.env == "rear" else 1
   extra["num_eval_envs"] = 8
-  env_cfg.naconmax = 128 if args.env != "go1" and env_cfg.terrain_config.enable else 64  # 8 robots, not 8192
+  if args.env == "rear":
+    extra["training_metrics_steps"] = 2_000
+  big = args.env == "rear" or (args.env != "go1" and env_cfg.terrain_config.enable)
+  env_cfg.naconmax = 128 if big else 64  # 8 robots, not 8192
 
 T_ENV = time.time()
 with open(out / "config.json", "w") as f:
@@ -155,8 +184,21 @@ rows = []
 evals = []  # (seconds since training started, eval seconds) per progress call
 
 
+train_rows = []
+
+
 def progress(step, metrics):
   now = time.time() - start
+  if any(k.startswith("episode/") for k in metrics):
+    # Training robots' episodes (rearing: ladder rungs, deadlines, cost factor live there,
+    # not in the fresh eval robots). Own file; not an evaluation.
+    train_rows.append({"step": step, "minutes": round(now / 60, 2),
+                       **{k: float(v) for k, v in metrics.items()}})
+    with open(out / "train_progress.csv", "w", newline="") as f:
+      w = csv.DictWriter(f, fieldnames=list(train_rows[-1].keys()))
+      w.writeheader()
+      w.writerows(train_rows)
+    return
   evals.append((now, float(metrics.get("eval/epoch_eval_time", 0.0)), int(step)))
   row = {"step": step, "minutes": round(now / 60, 2)}
   row.update({k: float(v) for k, v in metrics.items() if k.startswith("eval/")})

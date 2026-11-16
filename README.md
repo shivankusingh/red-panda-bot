@@ -26,6 +26,7 @@ This project rebuilds known methods; the tail is the new part.
 - Rhoban, BAM servo identification
 - Lee et al., "Learning quadrupedal locomotion over challenging terrain" (Science Robotics, 2020)
 - Kumar et al., "RMA: Rapid Motor Adaptation for Legged Robots" (2021)
+- Florensa et al., "Reverse Curriculum Generation for Reinforcement Learning" (2017); the start-pose ladder used to learn rearing
 - Lee et al., "Robust Recovery Controller for a Quadrupedal Robot using Deep Reinforcement Learning" (2019)
 - Margolis & Agrawal, "Walk These Ways" (2022); the footfall-schedule idea behind the red panda walk
 - Plocek & Dunham, red panda walking kinematics at Cleveland Metroparks Zoo (2023, Case Western Reserve University); evidence that red pandas use a lateral-sequence walk

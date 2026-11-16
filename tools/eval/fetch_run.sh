@@ -16,7 +16,7 @@ for i in $(seq 1 180); do   # up to 1 hour
   if [ -n "$out" ]; then
     echo "$RUN: $out"
     mkdir -p runs/$RUN/eval
-    for f in params.pkl progress.csv config.json timing.json gpu.csv posture.json walk.gif; do
+    for f in params.pkl progress.csv train_progress.csv config.json timing.json gpu.csv posture.json walk.gif; do
       scp $O -q -P $PORT root@$HOST:$REMOTE/$f runs/$RUN/ 2>/dev/null
     done
     scp $O -q -P $PORT "root@$HOST:$REMOTE/eval/*" runs/$RUN/eval/ 2>/dev/null

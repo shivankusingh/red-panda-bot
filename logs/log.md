@@ -623,3 +623,31 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - A torque balance (lever x force) settles "can a 12% prop hold the body?" in one line: no, it needs 50%.
   - A reward can't fix a problem the schedule builds in. Find the physical cause first.
 - **Cost:** ~$0.75 (three runs incl. on-pod evals). Running total ~$9.90.
+
+### Rearing runs rr1-rr6: from "stand and pay" to rearing up from a walking start
+- **Did:** rearing env (`sim/red_panda_rear.py`): the policy owns 12 leg + 3 tail servos; tail and torso can touch the floor (sensors tell the tail tip from "sitting"); episodes start from states the run-26 walking policy actually produced (`tools/rear_starts.py`: standing and mid-walk); target = tripod option A (70 deg, hips 16 cm). Physics speed bound (`tools/eval/rear_speed_limit.py`): joint travel alone 0.23 s; the whole body pivoting 72 deg about the hind feet with perfect timing 0.39 s at stall, **0.44 s (1.8 kg) / 0.47 s (1.98 kg)** with torque capped at 65% of stall. Joint motion alone doesn't rear (front feet stay down, hind legs fold under), and the front legs can't throw (a straight front leg is only 1.3 cm longer).
+- **Rewards (my decisions):** tilt, height, tripod_contact, tail_first, bad_contact; **"arrived"** = full tripod (contacts + tilt 70 +/- 5 + hips 16 +/- 1.5 cm) held 0.2 s, so speed can't be bought with height; **late -10/s, linear**, past a per-robot deadline (curriculum 2.0 -> 0.8 s, like Rudin's terrain levels); a fall before arriving pays the remaining time (no falling to stop the bill); **servo_pinned -1** (>= 95% of available torque), **over_peak -3** (per N*m above 65% of stall); walking's regularizers; **no clip at 0** (with a clip a -10 cost is no worse than -1). Later: **lean +3** = tilt/70 x height bell (a reward, not a "still down" penalty, so falling can't escape it).
+- **Plumbing:** `train_walk.py --env rear` (300-step episodes; `num_resets_per_eval=0`, else Go1's resets wipe the per-robot curriculum every ~250 steps; training-robot metrics to `train_progress.csv`; `--restore` warm start); `tools/eval/rear_check.py` (arrival, servo load, cheat checks: ghost knees, tail under the body, tail landing speed; GIF; optional ladder rung).
+
+  | Run | Change | From standing / mid-walk starts | What happened |
+  |---|---|---|---|
+  | rr1 | starter set | 0/64 | stood still, paid the full late bill. **Bug:** tail could only reach -29 deg, planting it from standing needs -35 |
+  | rr2a / rr2b | tail range fixed / + tail_first off | 0 / 0 | 2a: tail as a kickstand, slams at 1.2 m/s; 2b: tail in the air |
+  | rr3 | + lean 3 | 0 | never leaned (lean reward 0.00 all run) |
+  | rr4b | cost curriculum x0.1 -> x1 (Hwangbo 2019) | 0 | thrashed 60x more early, still never leaned |
+  | rr4a2 | reverse ladder, 25% of robots | 0 | placed in the tripod, it walked itself down in 0.4 s |
+  | rr5a | rr4a2 + discount 0.99 | 0 | same as 4a2 |
+  | rr5b | ladder, 100% of robots | 0 | **first rearing:** from 10-30 deg and 60-70 deg starts 15-16/16 in ~1 s; hole at 40-50 deg |
+  | rr6a | warm start from 5b + bridge rungs (5 deg; standing + tail planted) | 4/64 | forgot the upper rungs |
+  | **rr6b** | rr6a + 50% replay of passed rungs | **50/64, 0 falls** | median 4.1 s (fastest 1.24), tilt 70, hips 14.9 cm, every rung 9-16/16 |
+
+- **Learned:**
+  - A smooth reward doesn't help if the robot can't move smoothly toward it. Leaning past ~3 deg needs the front feet off the floor, and below ~55 deg (hips at 16 cm) the robot is unbalanced: a cliff, not a slope. PPO's fresh random noise every 20 ms averages out through slow servos; it never makes the coordinated push.
+  - The rewards weren't the problem: a scripted hold in the tripod earns +5/s with every penalty ~0, and rr5b earns +23 per episode from 10 deg vs -40 standing. It was exploration and practice.
+  - The discount sets how far ahead training credits an action: 0.97 (Go1's) looks ~0.67 s ahead, so a reward 2 s away counts 4.8%. Walking pays off within half a second; rearing pays 1-2 s after the effort. (rr5a showed the 25% mix was the bigger blocker, though.)
+  - A shared network learns what most robots practise: 25% on the ladder -> the standing habit won; 100% -> it learned to rear.
+  - A reverse curriculum (Florensa et al. 2017) forgets old rungs unless they are replayed (rr5b's 40-50 deg hole, rr6a's collapse).
+  - Mac tests (CPU jax) don't catch GPU-only errors: `jax.lax.cond` around `mjx.forward` and `jax.tree.map` merges of physics state fail on Warp; use `Data.where` and smoke-test on the pod first.
+  - My predictions: the tail slam (cheat #5) showed up in rr2a/rr3; ghost knees didn't.
+- **Open:** speed (median 4.1 s vs 0.8 s target; the deadline curriculum barely runs for walking starts yet), hips 14.9 cm, right hind hip peak 2.18 N*m (over 65% of stall 2.3% of the time), success 78% (go/no-go needs 90%).
+- **Cost:** ~$1.80 for rearing runs (EU-RO-1 GPUs scarce: often several minutes of retries). Running total ~$11.70.

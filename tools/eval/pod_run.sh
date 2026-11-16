@@ -13,7 +13,9 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.70
 export WARP_CACHE_PATH=/workspace/warp_cache$SUF          # separate caches per pod: no shared writes
 nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,power.draw --format=csv,noheader -l 1 > /workspace/${NAME}_gpu.csv &
 SMI=$!
-python tools/train_walk.py --env redpanda --name $NAME --set gait_config.duty=$DUTY "$@" \
+# TRAIN_ENV=rear trains rearing (pass "-" as duty; the walking evals are skipped).
+if [ "${TRAIN_ENV:-redpanda}" = "rear" ]; then EXTRA=(); EVALS=0; else EXTRA=(--set gait_config.duty=$DUTY); fi
+python tools/train_walk.py --env ${TRAIN_ENV:-redpanda} --name $NAME "${EXTRA[@]}" "$@" \
   --compile_cache /workspace/jax_cache$SUF 2>&1 | grep --line-buffered -v -E "$F" > /workspace/${NAME}.log
 kill $SMI; cp /workspace/${NAME}_gpu.csv runs/$NAME/gpu.csv
 echo "training end $(date -u +%H:%M:%S)" >> $TT

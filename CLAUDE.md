@@ -65,6 +65,8 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Topic | Decision |
 |---|---|
 | Rearing sequence | Plant the tail, move the center of mass over the hind feet, then lift the front feet |
+| Tripod target pose | ~70° nose-up tilt, hind hips 16 cm up, hind feet ~7 cm ahead of the hips, tail lying back along the floor (option A). Static hold at 1.98 kg: hind hip 0.70, knee 0.27, tail lift 0.57 N·m (all below rated); CoM 3.2 cm inside the feet+tail triangle (~7° forward rock before it tips onto the front feet). Worst servo in the tripod is the hind hip (feet ahead of the hips), not the knee. Getting up passes 30–50° tilt where the hip is over rated (1.0–1.3 N·m) briefly. From `tools/eval/tripod_static.py` |
+| Rearing training | Rewards: tilt, height, lean (tilt/70 x height bell), tripod contact, tail-first, sitting; late -10/s linear past a per-robot deadline (2.0 -> 0.8 s) after "arrived" (full tripod held 0.2 s); servo pinned / over 65% stall costs; no reward clip. Learned with a reverse ladder of start poses (70 deg -> standing, incl. bridge rungs), 100% of robots on it, 50% replay of passed rungs, warm-started. rr6b: 50/64 from walking starts, median 4.1 s |
 | Policy structure | Separate policies plus a switcher for Tier 1; rearing training starts from the walking policy's standing poses |
 | Tail control | Animation-driven sway (with follow-through) while walking and idle; RL policy controls it in tripod and free stand |
 | Personality scope (Tier 1) | Head, ears, and eyes only; legs and tail belong to the policy |
