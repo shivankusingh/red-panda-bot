@@ -778,3 +778,40 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
   - Check what the evaluation actually starts from: `down_check` first inherited the run's ladder and started on the 10 deg rung.
 - **Next:** dn_run3 = continue from dn_run2 with a graded `feet_down` (feet down / 4) instead of `four_feet`.
 - **Cost:** ~$0.40. Running total ~$14.40.
+
+## 2026-11-17
+
+### Coming down dn_run3-5: the paw that stayed up, a fresh start, and hind-hip strain
+- **dn_run3a/b** (continue from dn_run2 with a graded `feet_down` = feet down / 4; 3b also ramps servo costs 0.3 -> 1): still **0/64 landed**, ladder stuck on its first rung. 3b had the softest landings (0.38 m/s).
+- **Why (tests on the Mac):** every "landed" condition passed except the right front paw, 4.4 cm up on every robot (not a sensor bug). Holding all four feet at home scores **+8.5/s vs the policy's -2.7/s**, and the policy lifts the paw even when started on four feet. It balanced on a lopsided triangle (left front hip-side at its -20 deg limit under the body, right front swung out 24 deg and folded, one hind knee straight); moving one leg down alone made things worse (-10/s), so PPO's small steps couldn't get out. dn_run2 invented the habit when the fourth paw paid nothing, and `--restore` carried it over. The 10 deg start rung is symmetric (both front paws 5.1 cm up).
+- **dn_run4a/b: from scratch** (graded `feet_down`, cost ramp 0.3 -> 1), 4b with a new `front_symmetry` -5 ((left - right front hip-side)^2 + (left - right front knee)^2):
+
+  | From the real 70 deg tripod | dn_run3b | dn_run4a | dn_run4b (+ symmetry) |
+  |---|---|---|---|
+  | Landed / falls | 0/64 / 0 | **64/64** / 0 | **64/64** / 0 |
+  | Landing median (slowest) | - | 1.02 s (1.68) | 0.90 s (1.10) |
+  | First front touchdown median / worst | 0.38 / 0.68 m/s | 0.21 / 0.30 | 0.19 / 0.33 |
+  | Training ladder at the end | rung 0 | rung ~4.4 of 6 | rung 6 (top), 90% landing |
+  | Front hip-side L / R, hind knees L / R | -20/+24, 36/0 deg | +20/+6, 13/37 | +19/+23, 17/19 |
+
+- **Strain, measured every 4 ms** (new `tools/eval/down_load.py`; the other checks sample every 20 ms): feet hit the floor with 1.1-1.9 body weights, **half of a walking step** (3.2-3.9). But 4b's hind hips sat at stall for 56-80 ms (max 148) and were **back-driven** (braking at full torque while the joint still turns backwards, up to 4.7 rad/s = the gear-tooth case) for up to 56 ms. Walking never back-drives.
+- **dn_run5a/b** (continue from 4b, full costs): 5a `over_peak` -3 -> -15; 5b also a new `backdriven` -2 (|speed| of each servo braking at >= 90% of stall).
+
+  | 1.8 kg | dn_run4b | dn_run5a | **dn_run5b (kept)** |
+  |---|---|---|---|
+  | Landed / falls | 64/64 / 0 | 64/64 / 0 | 63/64 / 0 (one took 3.6 s) |
+  | Landing median | 0.90 s | 0.93 s | 1.20 s |
+  | Hind hips over 65% stall, median / max | 56-80 / 148 ms | 26-42 / 92 | 28-34 / 88 |
+  | Back-driven, max | 48-56 ms | 16-32 ms | **8-12 ms** |
+  | Touchdown median / worst | 0.19 / 0.33 | 0.20 / 0.34 | 0.17 / 0.25 m/s |
+
+- **When (`down_load.py --timeline`):** two moments. Push-off at 0-0.1 s (hips + tail shove the body off the stable tripod, ~13 ms over 65%, same in every run) and braking while tipping from 37 to 9 deg before the front paws arrive (4b 57 ms + back-driving; 5b 22 ms, ~none).
+- **Learned:**
+  - A restored policy can be stuck in a habit the reward no longer wants. When the better pose needs several joints to change at once, start fresh.
+  - Check what fails part by part before changing rewards: "landed" failed on exactly one condition, and the reward already preferred four feet.
+  - Sampling every 20 ms hid the stall spikes (99th percentile 2.1-2.2 N*m vs 2.9 every 4 ms).
+  - 5x a cost only halved the strain; a cost aimed at the actual harm (back-driving) did more.
+- **Decision (mine):** keep dn_run5b; its settings are the come-down defaults. Recheck the hip strain with the BAM servo model in January (how a real STS3215 brakes when forced backwards is what the sim guesses).
+- **Ops:** EU-RO-1 had no 4090/5090 for hours; RTX PRO 4500 Blackwell ($0.72/h) works with the same venv (13.4 min per 200M steps vs ~11 on a 4090). Retrying every 3 minutes got GPUs. Once three requests sent as fallbacks all succeeded; the extra pod was deleted within a minute.
+- **Next:** the full Tier 1 chain in sim: walk -> rear -> hold -> come down -> walk, switching the moment each skill reports done.
+- **Cost:** ~$1.75. Running total ~$16.15.
