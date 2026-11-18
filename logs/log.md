@@ -815,3 +815,19 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Ops:** EU-RO-1 had no 4090/5090 for hours; RTX PRO 4500 Blackwell ($0.72/h) works with the same venv (13.4 min per 200M steps vs ~11 on a 4090). Retrying every 3 minutes got GPUs. Once three requests sent as fallbacks all succeeded; the extra pod was deleted within a minute.
 - **Next:** the full Tier 1 chain in sim: walk -> rear -> hold -> come down -> walk, switching the moment each skill reports done.
 - **Cost:** ~$1.75. Running total ~$16.15.
+
+### The whole Tier 1 chain in sim (chain_check)
+- **Did:** `tools/eval/chain_check.py` runs walk (rp_run26) -> rear (rr_run11) -> hold -> come down (dn_run5b) -> walk, switching like the robot's switcher will: each hand-off copies the exact pose and speeds into the next policy's env with every servo holding its current angle. "Rear" is pressed while walking at 0.12 m/s; "down" after ~3 s of holding; each robot switches to walking the moment it lands. Nominal robot (flat, no shoves, delay fixed 20 ms, no calibration error) so only the switching is tested.
+
+  | Phase (32 robots) | Result |
+  |---|---|
+  | Walk 3 s | 0 falls, 32 cm (ideal 36) |
+  | Rear up from walking | 32/32 arrived, median 0.84 s (slowest 0.94) |
+  | Hold | 32/32 in the tripod at "down", tilt 73 deg |
+  | Come down | 32/32 landed, median 1.34 s (slowest 1.52), 0 falls |
+  | Walk off at landing | 0 falls, 35 cm in 3 s (ideal 36) |
+  | **Whole chain** | **32/32** |
+
+- **Learned:** handing over to walking the instant "landed" is true works; the walking policy fixes the splayed stance in its first steps. That correction is a small jolt: hind-hip peak in the first 0.5 s median 1.83 N*m, worst 2.55 (87% of stall; steady walking ~2.0). Coming down from where rearing actually ended (73 deg) takes 1.34 s vs 1.20 from the saved start poses.
+- **Did also:** README now shows the chain GIF (`media/tier1_chain.gif`, 2.2 MB, cut down from 11 MB) and the milestone.
+- **Next:** the same chain on a randomized robot (mass, delay, calibration, shoves); turning on command with the current walking policy.
