@@ -73,7 +73,7 @@ Training order: walking → rearing into the tripod → fall recovery → free s
 | Personality scope (Tier 1) | Head, ears, and eyes only; legs and tail belong to the policy |
 | Fur | None. Printed colored shell with a ringed tail |
 | Servos | STS3215 C018 (12 V) for all legs and the tail. Compare loads to rated torque, not stall |
-| Power | One 3S LiPo for servos; separate 5 V / 5 A regulator for the Pi; shared ground |
+| Power | One 3S LiPo for servos; separate 5 V / 5 A regulator for the Pi; shared ground. Open question: a seller lists the STS3215 12 V at 4.0–12 V, but a full 3S is 12.6 V. Check Feetech's C018 datasheet before designing the power board (options: don't charge to full, or a 12 V regulator on the servo bus that can take the current spikes) |
 | Bus | Legs, tail, and neck on the serial bus; ears on PWM |
 | Rough-model body | 32 × 10 × 5 cm, hips ±12 cm front/back of center; legs = Pupper ×0.7 (8.64 + 8.05 cm, run 14b), standing with knees bent 45° and feet under the hips (torso ~16 cm, red panda height). Final lengths depend on fitting the servos in CAD. Later sim test: Pupper's 27.6 cm body for rearing comparison |
 | Walking gait | Lateral-sequence walk (LH → LF → RH → RF), evenly spaced, each foot down 75% of a 1.0 s stride: always 3 feet down (no same-side 2-leg moments), steps ±4.5 cm at 0.12 m/s, hind lift ~1.5–1.8 cm (servo-limited), hard floor 1.2 cm (run 26) |
@@ -119,12 +119,13 @@ Closest existing project: Open Duck Mini (STS3215 servos, Raspberry Pi, MuJoCo P
 ## Roadmap
 
 **Phase 1: simulation (Nov 2026 → ~Feb 2027)**
-- [ ] Rough box-and-cylinder red panda model with 12 V servo limits (on the Mac)
-- [ ] First GPU session: run the Playground Go1 example ~10 min and compare its reward curve to the published one (setup check), then train the red panda
+- [x] Rough box-and-cylinder red panda model with 12 V servo limits (on the Mac)
+- [x] First GPU session: run the Playground Go1 example ~10 min and compare its reward curve to the published one (setup check), then train the red panda
 - [ ] I can explain every reward term (read Rudin 2021 alongside)
-- [ ] Walking + turning on the rough model (budget 4–6 weeks)
+- [x] Walking + turning on the rough model (rp_run26; `tools/eval/turn_check.py`: turns in place and on curves at 81-97% of the asked rate, 0 falls in 8 commands x 32 robots, nominal and randomized. Later polish: slight left bias, slow backing up)
 - [x] Rearing into the tail tripod; joint torques logged (rr_run11, rough model)
-- [ ] Winter break: servo test rig (2–3 servos), test-printed leg, bus timing measurements
+- [x] Coming back down (dn_run5b) and the full Tier 1 chain in sim: walk -> rear -> hold -> come down -> walk (`tools/eval/chain_check.py`: 32/32 nominal, randomized + shoves 30/32 ready to walk, 0 falls)
+- [ ] January 2027 (winter break is vacation; the printer is on campus): servo test rig (2–3 servos), test-printed leg, bus timing measurements. Parts, shipped to campus: 6x STS3215 12 V / 30 kg·cm (C018; spec 0.222 s/60° = 4.72 rad/s matches the sim), a bus adapter (FE-URT-1 or Waveshare Bus Servo Adapter (A)), a 12 V ≥ 5 A bench supply
 
 **Go/no-go for building (~Jan–Feb 2027):** rearing ≥ 90% success in sim with realistic servo limits and randomization; torques pass; servo model matches rig data; bus supports 50 Hz; budget available.
 

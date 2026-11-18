@@ -859,3 +859,25 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Still not ready at 3 s (handed over by the timeout, walked off fine):** robot 10 (1.94 kg, the heaviest) rests its tail tip on the floor; robot 16 (stiff servos x1.23, friction 0.52) has feet and tail right, so it fails "still": it keeps rocking.
 - **Learned:** "still" makes the hand-over a little later than the strict box did (1.40 vs 1.34 s) because the strict box never asked for stillness; only 12-14 of 32 met the strict box before being ready.
 - **Next:** turning check on rp_run26; order servo rig parts; roadmap cleanup.
+
+### Turning on command (turn_check)
+- **Did:** `tools/eval/turn_check.py`: 8 joystick commands, each held 6 s on 32 robots (no shoves, robots start at rest), measured over the last 4 s; nominal and randomized robots; top-down path plot per command (`runs/rp_run26/turn_check*.png`).
+
+  | Command (rp_run26) | Turn rate, % of asked: nominal (worst) | Randomized (worst) | Falls |
+  |---|---|---|---|
+  | Turn in place left / right, 0.5 rad/s | 89 / 86% | 91 / 91% (75) | 0 |
+  | Slow turn in place, 0.25 rad/s | 91% | 89% | 0 |
+  | Curve left / right, 12 cm/s + 0.3 rad/s | 96 / **81%** | 97 / **84% (66)** | 0 |
+  | Straight 12 cm/s | drifts 7 deg left in 6 s | 8 deg | 0 |
+  | Backward 10 cm/s | gets 6.4 cm/s | 6.8 cm/s | 0 |
+  | Stop | ~1 cm/s shuffle | ~1 cm/s | 0 |
+
+- **Learned:**
+  - It turns on command both ways, in place and on curves, with no falls: enough for gamepad driving (I close the loop). Roadmap: walking + turning ticked.
+  - Turning in place keeps the rate but wanders 5-10 cm around the start; curves track the ideal path closely.
+  - A small learned left bias (the footfall order itself is left/right symmetric) helps left turns and costs right turns. Backing up reaches ~65% of the asked speed. Both for a later walking polish run.
+  - The share of time with >= 3 feet down is the same turning as straight (~70-80% nominal, 52-61% randomized): turning doesn't break the gait.
+  - The first run had 1 fall during "stop": walking's reset starts robots with a random speed (training practice for recovery), and that robot started at 62 cm/s and tipped before settling. A test quirk, not a stopping problem; the check now starts at rest.
+- **Hardware:** checked a servo listing: the 7.4 V / 19 kg·cm STS3215 is the wrong version (would be damaged by a 3S battery, and has 37% less torque than the policies use). The 12 V / 30 kg·cm one matches the sim: 0.222 s/60° = 4.72 rad/s no-load (sim 4.7), 2.94 N·m stall, 55 g. Open question: that listing says 4.0-12 V max, a full 3S is 12.6 V (noted in CLAUDE.md).
+- **Roadmap:** ticked the rough model, the first GPU session, walking + turning, and coming down + the full chain; the servo rig moved to January.
+- **Next:** order rig parts (6 servos, bus adapter, 12 V bench supply) to campus; export the policies to ONNX and time them; CAD tool decision.
