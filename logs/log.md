@@ -846,3 +846,16 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Why 3 missed "landed":** all four feet down and tilt fine, but the hind hips at 14.6-14.7 cm, right on the edge of the 14.5-17.5 cm box (one also had its tail tip still down). dn_run5b's stance sits low (14.8 cm vs 16; dn_run4b 15.3), and a heavy robot, soft servos or a slippery floor sag it a few mm further. All 3 walked off fine when handed over at the 3 s timeout.
 - **Learned:** the training "landed" box is stricter than what walking needs. Test failures need a "why": here the robot was fine and the definition was the problem.
 - **Decision (mine):** the switcher hands over to walking on "ready to walk" = 4 feet down + tail up + body still for 0.2 s (no tilt/height limits), with a timeout fallback. Fix the low, splayed end stance later in a polish run.
+
+### Switcher rule: "ready to walk" (option A)
+- **Did:** the chain test now hands over to walking on "ready to walk" = 4 feet down + tail tip up + body still (torso < 5 cm/s and < 0.5 rad/s) for 0.2 s in a row, no tilt/height limits, 3 s timeout fallback. The training "landed" box is still reported.
+
+  | 32 robots | Nominal | Randomized + shoves |
+  |---|---|---|
+  | Ready to walk (before the timeout) | 32/32, median 1.40 s (slowest 1.72) | **30/32** (was 29 with the strict box), median 1.41 s (slowest 2.18) |
+  | Falls in any phase | 0 | 0 |
+  | Walk off: distance in 3 s / hind-hip peak first 0.5 s (worst) | 34 cm / 2.44 N*m | 33 cm / 2.56 N*m |
+
+- **Still not ready at 3 s (handed over by the timeout, walked off fine):** robot 10 (1.94 kg, the heaviest) rests its tail tip on the floor; robot 16 (stiff servos x1.23, friction 0.52) has feet and tail right, so it fails "still": it keeps rocking.
+- **Learned:** "still" makes the hand-over a little later than the strict box did (1.40 vs 1.34 s) because the strict box never asked for stillness; only 12-14 of 32 met the strict box before being ready.
+- **Next:** turning check on rp_run26; order servo rig parts; roadmap cleanup.
