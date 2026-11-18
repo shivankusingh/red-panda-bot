@@ -831,3 +831,18 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Learned:** handing over to walking the instant "landed" is true works; the walking policy fixes the splayed stance in its first steps. That correction is a small jolt: hind-hip peak in the first 0.5 s median 1.83 N*m, worst 2.55 (87% of stall; steady walking ~2.0). Coming down from where rearing actually ended (73 deg) takes 1.34 s vs 1.20 from the saved start poses.
 - **Did also:** README now shows the chain GIF (`media/tier1_chain.gif`, 2.2 MB, cut down from 11 MB) and the milestone.
 - **Next:** the same chain on a randomized robot (mass, delay, calibration, shoves); turning on command with the current walking policy.
+
+### The chain on randomized robots (chain_check --random)
+- **Did:** `chain_check.py --random`: each robot gets one random world from training's own randomizer (friction 0.3-1.0, servo stiffness x0.7-1.3, mass 1.62-1.96 kg, torso balance point +/-2 cm), its own servo delay (0-40 ms) and calibration error (+/-2 deg), **kept the same through all three policies** (a real robot's servos don't change between skills), and each policy's training shoves are on.
+
+  | Phase (32 robots) | Nominal | Randomized + shoves |
+  |---|---|---|
+  | Walk 3 s | 0 falls | 0 falls |
+  | Rear up from walking | 32/32 | 32/32, median 0.88 s |
+  | In the tripod at "down" | 32/32 | 30/32 (2 shoved to 63-65 deg; both still landed) |
+  | "Landed" within 3 s | 32/32 | 29/32 |
+  | Falls coming down / walking off | 0 / 0 | **0 / 0** |
+
+- **Why 3 missed "landed":** all four feet down and tilt fine, but the hind hips at 14.6-14.7 cm, right on the edge of the 14.5-17.5 cm box (one also had its tail tip still down). dn_run5b's stance sits low (14.8 cm vs 16; dn_run4b 15.3), and a heavy robot, soft servos or a slippery floor sag it a few mm further. All 3 walked off fine when handed over at the 3 s timeout.
+- **Learned:** the training "landed" box is stricter than what walking needs. Test failures need a "why": here the robot was fine and the definition was the problem.
+- **Decision (mine):** the switcher hands over to walking on "ready to walk" = 4 feet down + tail up + body still for 0.2 s (no tilt/height limits), with a timeout fallback. Fix the low, splayed end stance later in a polish run.

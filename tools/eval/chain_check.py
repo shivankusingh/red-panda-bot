@@ -14,8 +14,13 @@ A robot that hasn't landed DOWN_MAX_S after the command is handed to walking any
 Nominal robot so the switching is what's tested: flat floor, no pushes, no joint offsets,
 servo delay fixed at 20 ms (the middle of the trained 0-40 ms) in every policy.
 
-  python tools/eval/chain_check.py [walk run] [rear run] [down run] [robots]
+  python tools/eval/chain_check.py [walk run] [rear run] [down run] [robots] [--random]
      (default rp_run26 rr_run11 dn_run5b 32)
+
+--random: a realistic robot instead. Each robot gets one random world from training's own
+randomizer (friction 0.3-1.0, servo stiffness x0.7-1.3, mass x0.9-1.1, torso balance point
++/-2 cm), its own servo delay (0-40 ms) and calibration error (+/-2 deg per leg servo), all
+kept the same through every policy, and each policy's training shoves are on.
 """
 import json
 import pickle
@@ -31,6 +36,7 @@ from brax.training.agents.ppo import networks as ppo_networks
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
+from mujoco_playground._src.wrapper import BraxDomainRandomizationVmapWrapper
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[2]
@@ -39,7 +45,8 @@ import red_panda_down as rd  # noqa: E402
 import red_panda_rear as rr  # noqa: E402
 import red_panda_walk as rpw  # noqa: E402
 
-A = sys.argv[1:]
+RANDOM = "--random" in sys.argv
+A = [a for a in sys.argv[1:] if not a.startswith("--")]
 WALK = A[0] if len(A) > 0 else "rp_run26"
 REAR = A[1] if len(A) > 1 else "rr_run11"
 DOWN = A[2] if len(A) > 2 else "dn_run5b"
@@ -47,16 +54,21 @@ N = int(A[3]) if len(A) > 3 else 32
 WALK_S, REAR_S, DOWN_MAX_S, WALK2_S = 3.0, 4.0, 3.0, 3.0
 DT = 0.02
 CMD = jp.array([0.12, 0.0, 0.0])
-OUT = REPO / "runs" / DOWN / "chain"
+OUT = REPO / "runs" / DOWN / ("chain_random" if RANDOM else "chain")
+WORLD_KEYS = jax.random.split(jax.random.PRNGKey(7), N)          # one random world per robot
+_k1, _k2 = jax.random.split(jax.random.PRNGKey(8))
+DELAY_SUB = jax.random.randint(_k1, (N,), 0, 11) if RANDOM else None  # 0-40 ms in 4 ms
+OFFSET = (jax.random.uniform(_k2, (N, 12), minval=-1, maxval=1) * jp.deg2rad(2.0)) if RANDOM else None
 
 
 def make_env(kind):
   run = {"walk": WALK, "rear": REAR, "down": DOWN}[kind]
   c = config_dict.ConfigDict(json.load(open(REPO / "runs" / run / "config.json"))["env"])
   c.impl = "jax"
-  c.pert_config.enable = False
-  c.servo_config.delay_ms = [20.0, 20.0]
-  c.servo_config.joint_offset_deg = 0.0
+  if not RANDOM:
+    c.pert_config.enable = False
+    c.servo_config.delay_ms = [20.0, 20.0]
+    c.servo_config.joint_offset_deg = 0.0
   if kind == "walk":
     rpw.use_flat(c)
     env = rpw.RedPandaWalk(config=c)
@@ -72,7 +84,12 @@ def make_env(kind):
       policy_obs_key=net["policy_obs_key"], value_obs_key=net["value_obs_key"])
   policy = jax.jit(jax.vmap(ppo_networks.make_inference_fn(nets)(
       pickle.load(open(REPO / "runs" / run / "params.pkl", "rb")), deterministic=True)))
-  return env, policy, jax.jit(jax.vmap(env.reset)), jax.jit(jax.vmap(env.step))
+  if not RANDOM:
+    return env, policy, jax.jit(jax.vmap(env.reset)), jax.jit(jax.vmap(env.step))
+  randomize = rpw.make_domain_randomizer(env)
+  venv = BraxDomainRandomizationVmapWrapper(env, lambda m: randomize(m, WORLD_KEYS))
+  env._venv = venv
+  return env, policy, jax.jit(venv.reset), jax.jit(venv.step)
 
 
 def contact_of(env, data):
@@ -82,7 +99,7 @@ def contact_of(env, data):
 
 def handoff_fn(env):
   """fresh (a reset state of `env`) + src physics -> the same robot, now run by `env`."""
-  def one(fresh, src):
+  def one(fresh, src, i):
     q, v = src.qpos, src.qvel
     ctrl = (env._init_ctrl.at[env._leg_act].set(q[env._leg_qpos])
             .at[env._tail_act].set(q[env._tail_qpos]).at[env._neck_act].set(q[env._neck_qpos]))
@@ -94,12 +111,17 @@ def handoff_fn(env):
       info["last_motor_targets"] = jp.stack([d.ctrl, d.ctrl])
     info["last_contact"] = contact_of(env, d)
     info["last_leg_qvel"] = v[env._leg_qvel]
+    if RANDOM:  # this robot's own servo delay and calibration error, the same in every policy
+      info["delay_substeps"] = DELAY_SUB[i]
+      if "joint_offset" in info:
+        info["joint_offset"] = OFFSET[i]
     if "command" in info and "steps_until_next_cmd" in info:   # walking: fixed command
       info["command"] = CMD
       info["steps_until_next_cmd"] = jp.array(10**6, dtype=jp.int32)
     return fresh.replace(data=d, obs=env._get_obs(d, info), info=info,
                          done=jp.zeros_like(fresh.done))
-  return jax.jit(jax.vmap(one))
+  f = jax.jit(jax.vmap(one))
+  return lambda fresh, src: f(fresh, src, jp.arange(N))
 
 
 def select(mask, a, b):
@@ -176,6 +198,7 @@ steps_walked = np.zeros(N, int)
 end_xy = np.full((N, 2), np.nan)
 down_fell, walk2_fell = np.zeros(N, bool), np.zeros(N, bool)
 hip_after_switch = np.zeros(N)
+why_not = {}
 t = 0
 while True:
   key, k1, k2 = jax.random.split(key, 3)
@@ -195,6 +218,15 @@ while True:
   landed_now = np.array(ds.info["arrived"]) & ~switched
   timeout = ~switched & (t * DT >= DOWN_MAX_S)
   go = landed_now | timeout
+  if timeout.any():  # why not landed? each part of the "landed" test at the moment of hand-over
+    c_ = np.array(jax.vmap(denv._feet_contact)(ds.data))
+    tail_ = np.array(jax.vmap(lambda d: denv._found(d, "tail_tip"))(ds.data))
+    tilt_ = np.array(tilt(ds.data))
+    hip_ = 100 * np.array(ds.data.xpos)[:, denv._hind_thigh, 2].mean(1)
+    for i in np.where(timeout)[0]:
+      why_not[i] = (f"feet FL/FR/BL/BR {''.join('1' if x else '0' for x in c_[i])}, tail tip "
+                    f"{'DOWN' if tail_[i] else 'up'}, tilt {tilt_[i]:.1f} (box -2+/-5), "
+                    f"hips {hip_[i]:.1f} cm (box 16+/-1.5)")
   if go.any():
     land[landed_now] = t * DT
     ws = select(jp.array(go), to_walk(wfresh, ds.data), ws)
@@ -212,7 +244,8 @@ landed = ~np.isnan(land)
 
 # --- Report
 pct = lambda m: f"{int(m.sum())}/{N}"  # noqa: E731
-print(f"chain: {WALK} -> {REAR} -> {DOWN} -> {WALK}, {N} robots, nominal robot, delay 20 ms\n")
+print(f"chain: {WALK} -> {REAR} -> {DOWN} -> {WALK}, {N} robots, "
+      + ("RANDOMIZED robots + training shoves\n" if RANDOM else "nominal robot, delay 20 ms\n"))
 print(f"1. walk {WALK_S:.0f} s at 0.12 m/s:   fell {pct(walk1_fell)}, distance median "
       f"{100 * np.median(walk1_dist):.0f} cm (ideal {100 * 0.12 * WALK_S:.0f}), speed at 'rear' "
       f"{100 * np.median(speed_at_cmd):.0f} cm/s")
@@ -230,6 +263,25 @@ print(f"4. walk off at landing:      fell {pct(walk2_fell)}, distance in {WALK2_
       f"{np.median(hip_after_switch):.2f} N*m (max {hip_after_switch.max():.2f})")
 all_ok = (~walk1_fell & ok & ~rear_fell & landed & ~down_fell & ~walk2_fell)
 print(f"\nwhole chain without a fall or a missed step: {pct(all_ok)}")
+if RANDOM:
+  mv = wenv._venv._mjx_model_v
+  mass = np.array(mv.body_mass).sum(1)
+  mu = np.array(mv.geom_friction)[:, wenv.mj_model.geom("floor").id, 0]
+  kp = np.array(mv.actuator_gainprm)[:, 0, 0] / wenv.mj_model.actuator_gainprm[0, 0]
+  stage = np.where(walk1_fell, "walk", np.where(rear_fell | np.isnan(arrive), "rear",
+                   np.where(down_fell | ~landed, "down", np.where(walk2_fell, "walk off", ""))))
+  print(f"\nrobots that failed (mass kg, friction, servo stiffness, delay ms):")
+  for i in np.where(~all_ok)[0]:
+    print(f"  robot {i:2d}: failed at {stage[i]:8s}  {mass[i]:.2f} kg, mu {mu[i]:.2f}, "
+          f"kp x{kp[i]:.2f}, delay {4 * int(DELAY_SUB[i])} ms; in tripod at 'down': "
+          f"{'yes' if in_tripod_at_cmd[i] else 'NO'} (tilt {tilt_at_cmd[i]:.0f})")
+    if i in why_not:
+      print(f"            not landed at {DOWN_MAX_S:.0f} s: {why_not[i]}")
+  for i in np.where(~in_tripod_at_cmd)[0]:
+    print(f"  robot {i:2d}: not in the tripod at 'down' (tilt {tilt_at_cmd[i]:.0f} deg), "
+          f"{'landed fine' if landed[i] else 'did not land'}")
+  print(f"range tested: mass {mass.min():.2f}-{mass.max():.2f} kg, friction {mu.min():.2f}-{mu.max():.2f}, "
+        f"stiffness x{kp.min():.2f}-{kp.max():.2f}, delay 0-40 ms")
 OUT.mkdir(parents=True, exist_ok=True)
 json.dump(dict(robots=N, walk1_fell=int(walk1_fell.sum()), rear_arrived=int(ok.sum()),
                rear_fell=int(rear_fell.sum()), arrive_median=float(np.nanmedian(arrive)),
