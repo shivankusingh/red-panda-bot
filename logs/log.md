@@ -881,3 +881,45 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Hardware:** checked a servo listing: the 7.4 V / 19 kg·cm STS3215 is the wrong version (would be damaged by a 3S battery, and has 37% less torque than the policies use). The 12 V / 30 kg·cm one matches the sim: 0.222 s/60° = 4.72 rad/s no-load (sim 4.7), 2.94 N·m stall, 55 g. Open question: that listing says 4.0-12 V max, a full 3S is 12.6 V (noted in CLAUDE.md).
 - **Roadmap:** ticked the rough model, the first GPU session, walking + turning, and coming down + the full chain; the servo rig moved to January.
 - **Next:** order rig parts (6 servos, bus adapter, 12 V bench supply) to campus; export the policies to ONNX and time them; CAD tool decision.
+
+## 2026-11-18
+
+### Test leg prep: how the knee servo drives the knee (A2)
+- **Did:** `chain_check.py --legs` logs every robot's hip/knee angles, speeds and torques through the whole chain (32 nominal robots, 0 falls) and works out what a rod-linkage leg would need. A standing-still check (home pose, 2 s) for the simple version.
+
+  | Knee servo fixed to... | Knee servo sets | Hip servo standing (front) | Hip servo peak in the chain | Knee servo speed peak |
+  |---|---|---|---|---|
+  | the thigh (A2, = sim) | the knee bend | 0.00 N·m | 2.63 front / 2.84 hind N·m | 3.9 / 4.7 rad/s |
+  | the body (A, coaxial with the hip) | the shin's direction | 0.19 N·m | **4.49 / 4.61 N·m (stall 2.94)** | **7.0 / 7.6 rad/s (max 4.7)** |
+
+  Joint use (forward +): front thigh -49 to -9°, bend 29-77°; hind thigh -43 to +47°, bend 0-60° (straight on the hard stop in the tripod). Knee torque p99 1.3 N·m, peak 2.9.
+- **Learned:**
+  - A servo gets twisted back as hard as it twists, and the push-back goes into what it's screwed to. On the thigh (A2) it cancels the foot's push on the thigh, so the hip has nothing to hold when standing; on the body (A) the hip servo has to hold it (hip servo = hip - knee torque).
+  - With A the knee servo also has to follow the hip: its angle = bend + hip angle, so speeds add.
+  - "Knee servo near the hip" (the earlier decision) was about weight; both A and A2 keep it. The sim's knee motor sets the bend, which only A2 does. A2 swings 55 g more at ~2 cm from the hip: 55 x 2² = 220 vs 4100 at the knee.
+  - Rod force = knee torque / lever length: ~195 N peak with a 15 mm lever. Too much for a thin printed rod.
+- **Decision (mine):** A2. Design the knee for at least 0-110° of bend.
+- **Next:** order the servos to campus; Onshape basics; import the STS3215 model; side-view layout sketch (thigh 86.4 mm, shin 80.5 mm, crank/lever); tolerance test print.
+
+## 2026-11-19
+
+### Starting CAD: sim numbers for Onshape and the knee rod linkage
+- **Did:**
+  - `cad/sim_dims.py` -> `cad/variables.md`: every dimension the policies trained on, as Onshape variables (thigh 86.45, shin 80.5 to the foot ball centre, hips +/-120 mm, leg plane 70 mm out, tail and neck offsets), the standing pose (torso 158 mm up, 2° nose-down, front thigh -27° / knee 61°, hind +25° / 49°) and the sim joint limits.
+  - `chain_check.py --legs` also saves raw knee bend + torque samples (`legs_raw.npz`); reran the chain nominal (32/32) and randomized (30/32 ready, 0 falls), same as before.
+  - `cad/knee_linkage.py`: rod force for every sim knee sample and the servo's stall limit, for any lever length, lever angle and rod size -> `cad/knee_linkage.png`. Animations: `cad/knee_linkage_anim.gif` (knee only) and `cad/leg_anim.gif` (hip-side, hip, knee one at a time, side + front view); `cad/knee_angle_compare.gif` (arm fixed at 15 / 50 / 80° off the thigh, same knee motion: 15° needs 568 N at a straight knee, 80° jams near 100° of bend, 50° never goes red).
+
+  | Lever L, rod | Rod force p99 | Peak pull / push (sim) | Worst push at stall (bends used) | Ideal buckling load | Margin |
+  |---|---|---|---|---|---|
+  | 15 mm, M3 | 99 N | 214 / 242 N | 256 N | 406 N | 1.6x |
+  | 20 mm, M3 | 74 N | 161 / 181 N | 192 N | 406 N | 2.1x |
+  | **20 mm, M4** | 74 N | 161 / 181 N | 192 N | 1218 N | **6.3x** |
+
+- **Learned:**
+  - The rod only turns the knee through the part of its push that is sideways to the lever: rod force = knee torque / (L x sin angle). Near a dead point (rod and lever in line) the push goes into the knee pin instead, and the force needed blows up (573 N at 110° bend with a 15 mm lever vs 196 N with the lever square to the rod).
+  - The knee torque flips sign all the time (holding weight vs folding the leg in swing), so the rod is pushed about as hard as it's pulled: buckling (a pushed thin rod suddenly bowing) is the check. Buckling strength goes with diameter^4.
+  - A longer lever lowers the force in every part of the chain (servo shaft, ball links, rod, knee pin); a thicker rod only helps the rod.
+  - Hip-side and hip servos carry the whole linkage with them, so it never twists out of its plane; when the hip swings the thigh, the knee servo doesn't turn but still holds the knee against the body's weight (~10 N on the rod in a typical step, ~88 N at p99).
+- **Decision (mine):** lever L = 20 mm, M4 threaded rod with ball links; lever on the kneecap side (weight pulls the rod), 50° off the thigh line at a straight knee (psi0 = 130°).
+- **Open:** sideways load on the knee servo's output shaft (up to ~190 N at stall), check on the rig.
+- **Next:** Onshape basics; STS3215 model in its own Part Studio; side-view skeleton sketch from `cad/variables.md` with the 20 mm crank/lever.
