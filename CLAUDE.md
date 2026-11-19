@@ -131,7 +131,7 @@ Closest existing project: Open Duck Mini (STS3215 servos, Raspberry Pi, MuJoCo P
 **Go/no-go for building (~Jan–Feb 2027):** rearing ≥ 90% success in sim with realistic servo limits and randomization; torques pass; servo model matches rig data; bus supports 50 Hz; budget available.
 
 **Phase 2: hardware (if built)**
-- [ ] Onshape CAD → sim with real masses; retrain
+- [ ] Onshape CAD → sim with real masses; retrain (started 2026-11-19: sim numbers as Onshape variables, knee rod linkage chosen)
 - [ ] Parts ordered; printed, assembled, wired; servo IDs set; every servo tested
 - [ ] Sim-vs-real joint-angle overlay check
 - [ ] Real walking with gamepad (target: end of spring 2027)
