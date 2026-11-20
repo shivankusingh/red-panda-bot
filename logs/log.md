@@ -923,3 +923,18 @@ Format: what I did · what I learned · mistakes fixed · decisions and why · n
 - **Decision (mine):** lever L = 20 mm, M4 threaded rod with ball links; lever on the kneecap side (weight pulls the rod), 50° off the thigh line at a straight knee (psi0 = 130°).
 - **Open:** sideways load on the knee servo's output shaft (up to ~190 N at stall), check on the rig.
 - **Next:** Onshape basics; STS3215 model in its own Part Studio; side-view skeleton sketch from `cad/variables.md` with the 20 mm crank/lever.
+
+## 2026-11-20
+
+### Onshape: skeleton sketch of the hind leg with the knee linkage
+- **Did:**
+  - Onshape document `red-panda-bot` (units mm). Variable Studio with `thigh` 86.45, `shin` 80.5, `lever` 20 mm, `lever_angle` 50°, `knee_bend` 48.6° (hind standing pose), linked into Part Studio 1.
+  - Skeleton sketch on the Front plane (x forward, z up = the sim's side view): hip at the origin, thigh vertical, shin at `#knee_bend`, knee lever fixed to the shin at `180 - #lever_angle` = 130°, hip crank parallel to the lever, rod joining the tips. Fully defined.
+  - Checked by changing `knee_bend`: at 0 the arms point up-forward 50° off the thigh; at 110 they are 20° from the rod (the dead-point margin); the rod stays parallel to the thigh throughout.
+- **Learned:**
+  - The rod never needs a length: equal, parallel arms make a parallelogram, so the rod comes out equal to the thigh (86.45). That's also why the knee bend copies the servo angle 1:1.
+  - The knee lever has to be dimensioned to the shin (it's printed onto it), not the thigh; dimensioned to the thigh it stays still while the shin swings, and the lever-shin angle drifts (178.6° at 48.6° bend instead of 130°).
+  - Knee bend is measured from the thigh's continuation past the knee (0 = straight); the inside angle is 180 - bend. Onshape picks which angle by where the dimension is placed.
+  - Gap between rod and lever = 130 - bend, so 20° at 110°: rod force there is ~3x the force at 90° for the same torque.
+  - Training randomized mass, CoM, servo kp, friction and delay, but not leg lengths: match the sim lengths exactly in CAD; if a length must change, test it in sim (chain check with longer/shorter legs) before committing to it.
+- **Next:** STS3215 model into Onshape (Open Duck Mini's or Feetech's STEP); place the knee servo at the hip with its output shaft as the crank pivot.
